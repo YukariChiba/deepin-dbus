@@ -4,6 +4,8 @@
  * Copyright (C) 2002, 2003  Red Hat, Inc.
  * Copyright (C) 2003 CodeFactory AB
  *
+ * SPDX-License-Identifier: AFL-2.1 OR GPL-2.0-or-later
+ *
  * Licensed under the Academic Free License version 2.1
  *
  * This program is free software; you can redistribute it and/or modify
@@ -37,5 +39,3 @@ dbus_bool_t _dbus_shell_parse_argv (const char *command_line,
 DBUS_END_DECLS
 
 #endif /* DBUS_SHELL_H */
-
-

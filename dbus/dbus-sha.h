@@ -3,6 +3,8 @@
  *
  * Copyright (C) 2003 Red Hat Inc.
  *
+ * SPDX-License-Identifier: AFL-2.1 OR GPL-2.0-or-later
+ *
  * Licensed under the Academic Free License version 2.1
  *
  * This program is free software; you can redistribute it and/or modify
@@ -47,6 +49,7 @@ void        _dbus_sha_update  (DBusSHAContext   *context,
                                const DBusString *data);
 dbus_bool_t _dbus_sha_final   (DBusSHAContext   *context,
                                DBusString       *results);
+DBUS_EMBEDDED_TESTS_EXPORT
 dbus_bool_t _dbus_sha_compute (const DBusString *data,
                                DBusString       *ascii_output);
 

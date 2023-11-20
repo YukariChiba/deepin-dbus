@@ -4,6 +4,8 @@
  *
  * Copyright (C) 2007 Red Hat, Inc.
  *
+ * SPDX-License-Identifier: AFL-2.1 OR GPL-2.0-or-later
+ *
  * Licensed under the Academic Free License version 2.1
  *
  * This program is free software; you can redistribute it and/or modify
@@ -32,6 +34,7 @@
 #include "activation-helper.h"
 #include "activation-exit-codes.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -43,6 +46,7 @@
 #include <dbus/dbus-misc.h>
 #include <dbus/dbus-shell.h>
 #include <dbus/dbus-marshal-validate.h>
+#include <dbus/dbus-sysdeps-unix.h>
 
 static BusDesktopFile *
 desktop_file_for_name (BusConfigParser *parser,
@@ -337,10 +341,16 @@ exec_for_correct_user (char *exec, char *user, DBusError *error)
   char **argv;
   int argc;
   dbus_bool_t retval;
+  const char *error_str = NULL;
 
   argc = 0;
   retval = TRUE;
   argv = NULL;
+
+  /* Resetting the OOM score adjustment is best-effort, so we don't
+   * treat a failure to do so as fatal. */
+  if (!_dbus_reset_oom_score_adj (&error_str))
+    _dbus_log (DBUS_SYSTEM_LOG_WARNING, "%s: %s", error_str, strerror (errno));
 
   if (!switch_user (user, error))
     return FALSE;
@@ -546,4 +556,3 @@ error_free_parser:
 error:
   return retval;
 }
-

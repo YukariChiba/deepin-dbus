@@ -1,11 +1,20 @@
 /* -*- mode: C; c-file-style: "gnu"; indent-tabs-mode: nil; -*- */
 /* dbus-string.c String utility class (internal to D-Bus implementation)
- * 
- * Copyright (C) 2002, 2003, 2004, 2005 Red Hat, Inc.
- * Copyright (C) 2006 Ralf Habacker <ralf.habacker@freenet.de>
+ *
+ * Copyright 2002-2007 Red Hat, Inc.
+ * Copyright 2003 CodeFactory AB
+ * Copyright 2003 Mark McLoughlin
+ * Copyright 2004 Michael Meeks
+ * Copyright 2006-2014 Ralf Habacker <ralf.habacker@freenet.de>
+ * Copyright 2006-2018 Collabora Ltd.
+ * Copyright 2007 Allison Lortie
+ * Copyright 2011 Roberto Guido
+ * Copyright 2013 Chengwei Yang / Intel
+ *
+ * SPDX-License-Identifier: AFL-2.1 OR GPL-2.0-or-later
  *
  * Licensed under the Academic Free License version 2.1
- * 
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -15,7 +24,7 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
@@ -34,8 +43,6 @@
 #include "dbus-marshal-basic.h" /* probably should be removed by moving the usage of DBUS_TYPE
                                  * into the marshaling-related files
                                  */
-/* for DBUS_VA_COPY */
-#include "dbus-sysdeps.h"
 
 /**
  * @defgroup DBusString DBusString class
@@ -156,7 +163,7 @@ _dbus_string_init_preallocated (DBusString *str,
   
   real->constant = FALSE;
   real->locked = FALSE;
-  real->invalid = FALSE;
+  real->valid = TRUE;
   real->align_offset = 0;
   
   fixup_alignment (real);
@@ -225,7 +232,7 @@ _dbus_string_init_const_len (DBusString *str,
   real->allocated = real->len + _DBUS_STRING_ALLOCATION_PADDING; /* a lie, just to avoid special-case assertions... */
   real->constant = TRUE;
   real->locked = TRUE;
-  real->invalid = FALSE;
+  real->valid = TRUE;
   real->align_offset = 0;
 
   /* We don't require const strings to be 8-byte aligned as the
@@ -234,8 +241,10 @@ _dbus_string_init_const_len (DBusString *str,
 }
 
 /**
- * Initializes a string from another string. The
- * string must eventually be freed with _dbus_string_free().
+ * Initializes a string from another string
+ *
+ * The string must be freed with _dbus_string_free() in case of success.
+ * In case of error the string is freed by this function itself.
  *
  * @param str memory to hold the string
  * @param from instance from which the string is initialized
@@ -245,13 +254,23 @@ dbus_bool_t
 _dbus_string_init_from_string(DBusString       *str,
                               const DBusString *from)
 {
- if (!_dbus_string_init (str))
-     return FALSE;
- return _dbus_string_append (str, _dbus_string_get_const_data (from));
+  if (!_dbus_string_init (str))
+    return FALSE;
+  if (!_dbus_string_append (str, _dbus_string_get_const_data (from)))
+    {
+      _dbus_string_free (str);
+      return FALSE;
+    }
+  return TRUE;
 }
 
 /**
- * Frees a string created by _dbus_string_init().
+ * Frees a string created by _dbus_string_init(), and fills it with the
+ * same contents as #_DBUS_STRING_INIT_INVALID.
+ *
+ * Unlike all other #DBusString API, it is also valid to call this function
+ * for a string that was filled with #_DBUS_STRING_INIT_INVALID.
+ * This is convenient for error rollback.
  *
  * @param str memory where the string is stored.
  */
@@ -259,21 +278,33 @@ void
 _dbus_string_free (DBusString *str)
 {
   DBusRealString *real = (DBusRealString*) str;
+  /* DBusRealString and DBusString have the same members in the same order,
+   * just differently-named */
+  DBusRealString invalid = _DBUS_STRING_INIT_INVALID;
+
+  /* Allow for the _DBUS_STRING_INIT_INVALID case */
+  if (real->str == NULL && real->len == 0 && real->allocated == 0 &&
+      !real->constant && !real->locked && !real->valid &&
+      real->align_offset == 0)
+    return;
+
   DBUS_GENERIC_STRING_PREAMBLE (real);
   
   if (real->constant)
-    return;
+    goto wipe;
 
   /* so it's safe if @p str returned by a failed
    * _dbus_string_init call
    * Bug: https://bugs.freedesktop.org/show_bug.cgi?id=65959
    */
   if (real->str == NULL)
-    return;
+    goto wipe;
 
   dbus_free (real->str - real->align_offset);
 
-  real->invalid = TRUE;
+wipe:
+  *real = invalid;
+  real->valid = FALSE;
 }
 
 static dbus_bool_t
@@ -433,6 +464,20 @@ open_gap (int             len,
            dest->len - len - insert_at);
 
   return TRUE;
+}
+
+/**
+ * Returns the allocated size of the string
+ *
+ * @param str the string
+ * @returns the allocated size
+ */
+int
+_dbus_string_get_allocated_size (const DBusString *str)
+{
+  DBUS_CONST_STRING_PREAMBLE (str);
+
+  return real->allocated;
 }
 
 #ifndef _dbus_string_get_data
@@ -947,18 +992,6 @@ _dbus_string_append (DBusString *str,
   return append (real, buffer, buffer_len);
 }
 
-/** assign 2 bytes from one string to another */
-#define ASSIGN_2_OCTETS(p, octets) \
-  *((dbus_uint16_t*)(p)) = *((dbus_uint16_t*)(octets));
-
-/** assign 4 bytes from one string to another */
-#define ASSIGN_4_OCTETS(p, octets) \
-  *((dbus_uint32_t*)(p)) = *((dbus_uint32_t*)(octets));
-
-/** assign 8 bytes from one string to another */
-#define ASSIGN_8_OCTETS(p, octets) \
-  *((dbus_uint64_t*)(p)) = *((dbus_uint64_t*)(octets));
-
 /**
  * Inserts 2 bytes aligned on a 2 byte boundary
  * with any alignment padding initialized to 0.
@@ -978,7 +1011,7 @@ _dbus_string_insert_2_aligned (DBusString         *str,
   if (!align_insert_point_then_open_gap (str, &insert_at, 2, 2))
     return FALSE;
 
-  ASSIGN_2_OCTETS (real->str + insert_at, octets);
+  memcpy (real->str + insert_at, octets, 2);
 
   return TRUE;
 }
@@ -1002,7 +1035,7 @@ _dbus_string_insert_4_aligned (DBusString         *str,
   if (!align_insert_point_then_open_gap (str, &insert_at, 4, 4))
     return FALSE;
 
-  ASSIGN_4_OCTETS (real->str + insert_at, octets);
+  memcpy (real->str + insert_at, octets, 4);
 
   return TRUE;
 }
@@ -1027,8 +1060,8 @@ _dbus_string_insert_8_aligned (DBusString         *str,
     return FALSE;
 
   _dbus_assert (_DBUS_ALIGN_VALUE (insert_at, 8) == (unsigned) insert_at);
-  
-  ASSIGN_8_OCTETS (real->str + insert_at, octets);
+
+  memcpy (real->str + insert_at, octets, 8);
 
   return TRUE;
 }
@@ -1079,7 +1112,7 @@ _dbus_string_append_printf_valist  (DBusString        *str,
 
   DBUS_STRING_PREAMBLE (str);
 
-  DBUS_VA_COPY (args_copy, args);
+  va_copy (args_copy, args);
 
   /* Measure the message length without terminating nul */
   len = _dbus_printf_string_upper_bound (format, args);
@@ -1163,6 +1196,35 @@ _dbus_string_append_byte (DBusString    *str,
     return FALSE;
 
   real->str[real->len-1] = byte;
+
+  return TRUE;
+}
+
+/**
+ * Append vector with \p strings connected by \p separator
+ *
+ * @param str the string
+ * @param strings vector with char* pointer for merging
+ * @param separator separator to merge the vector
+ * @return #FALSE if not enough memory
+ * @return #TRUE success or empty string vector
+ */
+dbus_bool_t
+_dbus_string_append_strings (DBusString *str, char **strings, char separator)
+{
+  int i;
+
+  if (strings == NULL)
+    return TRUE;
+
+  for (i = 0; strings[i]; i++)
+    {
+      if (i > 0 && !_dbus_string_append_byte (str, (unsigned char) separator))
+        return FALSE;
+
+      if (!_dbus_string_append (str, strings[i]))
+        return FALSE;
+    }
 
   return TRUE;
 }
@@ -1818,7 +1880,7 @@ _dbus_string_skip_blank (const DBusString *str,
       ++i;
     }
 
-  _dbus_assert (i == real->len || !DBUS_IS_ASCII_WHITE (real->str[i]));
+  _dbus_assert (i == real->len || !DBUS_IS_ASCII_BLANK (real->str[i]));
   
   if (end)
     *end = i;
@@ -2214,6 +2276,32 @@ _dbus_string_starts_with_c_str (const DBusString *a,
 }
 
 /**
+ * Checks whether a string starts with the given C string, after which it ends or is separated from
+ * the rest by a given separator character.
+ *
+ * @param a the string
+ * @param c_str the C string
+ * @param word_separator the separator
+ * @returns #TRUE if string starts with it
+ */
+dbus_bool_t
+_dbus_string_starts_with_words_c_str (const DBusString  *a,
+                                      const char        *c_str,
+                                      char               word_separator)
+{
+  char next_char;
+  const char *data;
+  _dbus_assert (c_str != NULL);
+
+  if (!_dbus_string_starts_with_c_str (a, c_str))
+    return FALSE;
+
+  data = _dbus_string_get_const_data (a);
+  next_char = data[strlen (c_str)];
+  return next_char == '\0' || next_char == word_separator;
+}
+
+/**
  * Appends a two-character hex digit to a string, where the hex digit
  * has the value of the given byte.
  *
@@ -2244,6 +2332,41 @@ _dbus_string_append_byte_as_hex (DBusString *str,
 
   return TRUE;
 }
+
+/* Currently only used when embedded tests are enabled */
+#ifdef DBUS_ENABLE_EMBEDDED_TESTS
+/**
+ * Appends \p size bytes from the buffer \p buf as hex digits to the string \p str
+ *
+ * If \p size is nonzero, then \p buf must be non-NULL.
+ *
+ * @param str the string
+ * @param buf the buffer to add bytes from
+ * @param size the number of bytes to add
+ * @returns #FALSE if no memory
+ */
+dbus_bool_t
+_dbus_string_append_buffer_as_hex (DBusString *str,
+                                   void *buf,
+                                   int size)
+{
+  unsigned char *p;
+  int i;
+
+  _dbus_assert (size >= 0);
+  _dbus_assert (size == 0 || buf != NULL);
+
+  p = (unsigned char *) buf;
+
+  for (i = 0; i < size; i++)
+    {
+      if (!_dbus_string_append_byte_as_hex (str, p[i]))
+        return FALSE;
+    }
+
+  return TRUE;
+}
+#endif
 
 /**
  * Encodes a string in hex, the way MD5 and SHA-1 are usually

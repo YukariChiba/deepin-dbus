@@ -4,6 +4,7 @@
  * Copyright © 2003 Philip Blundell <philb@gnu.org>
  * Copyright © 2011 Nokia Corporation
  * Copyright © 2014 Collabora Ltd.
+ * SPDX-License-Identifier: GPL-2.0-or-later
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -79,4 +80,11 @@ tool_write_all (int fd,
     }
 
   return TRUE;
+}
+
+void
+tool_stderr_error (const char    *context,
+                   DBusError     *error)
+{
+  fprintf (stderr, "%s: %s: %s\n", context, error->name, error->message);
 }

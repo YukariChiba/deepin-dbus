@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2003 Red Hat, Inc.
  * Copyright (C) 2002 Michael Meeks
+ * SPDX-License-Identifier: GPL-2.0-or-later
  *
  * Note that this file is NOT licensed under the Academic Free License,
  * as it is based on linc-cleanup-sockets which is LGPL.
@@ -34,6 +35,8 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include <dbus/dbus-macros.h>
 
 #ifndef TRUE
 #define TRUE (1)
@@ -372,6 +375,7 @@ clean_dir (const char *dir)
 
 #endif /* AF_UNIX */
 
+static void usage (int ecode) _DBUS_GNUC_NORETURN;
 static void
 usage (int ecode)
 {
@@ -379,6 +383,7 @@ usage (int ecode)
   exit (ecode);
 }
 
+static void version (void) _DBUS_GNUC_NORETURN;
 static void
 version (void)
 {

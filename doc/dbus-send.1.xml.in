@@ -22,6 +22,7 @@
 <cmdsynopsis>
   <command>dbus-send</command>
   <group choice='opt'><arg choice='plain'>--system </arg><arg choice='plain'>--session </arg><arg choice='plain'>--bus=<replaceable>ADDRESS</replaceable></arg><arg choice='plain'>--peer=<replaceable>ADDRESS</replaceable></arg></group>
+    <arg choice='opt'>--sender=<replaceable>NAME</replaceable></arg>
     <arg choice='opt'>--dest=<replaceable>NAME</replaceable></arg>
     <arg choice='opt'><arg choice='plain'>--print-reply </arg><arg choice='opt'><replaceable>=literal</replaceable></arg></arg>
     <arg choice='opt'>--reply-timeout=<replaceable>MSEC</replaceable></arg>
@@ -36,7 +37,7 @@
 
 <refsect1 id='description'><title>DESCRIPTION</title>
 <para>The <command>dbus-send</command> command is used to send a message to a D-Bus message
-bus. See <ulink url='http://www.freedesktop.org/software/dbus/'>http://www.freedesktop.org/software/dbus/</ulink> for more
+bus. See <ulink url='https://www.freedesktop.org/wiki/Software/dbus/'>https://www.freedesktop.org/wiki/Software/dbus/</ulink> for more
 information about the big picture.</para>
 
 
@@ -149,6 +150,12 @@ The default is implementation&hyphen;defined, typically 25 seconds.</para>
   </listitem>
   </varlistentry>
   <varlistentry>
+  <term><option>--sender=</option><replaceable>NAME</replaceable></term>
+  <listitem>
+<para>Request ownership of name <replaceable>NAME</replaceable> before sending the message. The name will be released when <command>dbus-send</command> exits.</para>
+  </listitem>
+  </varlistentry>
+  <varlistentry>
   <term><option>--type=</option><replaceable>TYPE</replaceable></term>
   <listitem>
 <para>Specify <emphasis remap='B'>method_call</emphasis> or <emphasis remap='B'>signal</emphasis> (defaults to "<emphasis remap='B'>signal</emphasis>").</para>
@@ -165,6 +172,6 @@ The default is implementation&hyphen;defined, typically 25 seconds.</para>
 
 <refsect1 id='bugs'><title>BUGS</title>
 <para>Please send bug reports to the D-Bus mailing list or bug tracker,
-see <ulink url='http://www.freedesktop.org/software/dbus/'>http://www.freedesktop.org/software/dbus/</ulink></para>
+see <ulink url='https://www.freedesktop.org/wiki/Software/dbus/'>https://www.freedesktop.org/wiki/Software/dbus/</ulink></para>
 </refsect1>
 </refentry>

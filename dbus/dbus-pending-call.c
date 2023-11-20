@@ -3,6 +3,8 @@
  *
  * Copyright (C) 2002, 2003 Red Hat Inc.
  *
+ * SPDX-License-Identifier: AFL-2.1 OR GPL-2.0-or-later
+ *
  * Licensed under the Academic Free License version 2.1
  *
  * This program is free software; you can redistribute it and/or modify
@@ -101,6 +103,7 @@ _dbus_pending_call_trace_ref (DBusPendingCall *pending_call,
 #endif
 }
 
+/* protected by _DBUS_LOCK_pending_call_slots */
 static dbus_int32_t notify_user_data_slot = -1;
 
 /**

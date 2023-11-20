@@ -4,6 +4,8 @@
  * Copyright (C) 2002, 2003, 2006  Red Hat, Inc.
  * Copyright (C) 2003 CodeFactory AB
  *
+ * SPDX-License-Identifier: AFL-2.1 OR GPL-2.0-or-later
+ *
  * Licensed under the Academic Free License version 2.1
  *
  * This program is free software; you can redistribute it and/or modify
@@ -66,17 +68,6 @@ _dbus_write_two (int               fd,
                  int               start2,
                  int               len2);
 
-int _dbus_connect_unix_socket (const char     *path,
-                               dbus_bool_t     abstract,
-                               DBusError      *error);
-int _dbus_listen_unix_socket  (const char     *path,
-                               dbus_bool_t     abstract,
-                               DBusError      *error);
-
-int _dbus_connect_exec (const char     *path,
-                        char *const    argv[],
-                        DBusError      *error);
-
 int _dbus_listen_systemd_sockets (DBusSocket  **fd,
                                   DBusError    *error);
 
@@ -89,11 +80,6 @@ dbus_bool_t _dbus_send_credentials (int              server_fd,
 dbus_bool_t _dbus_lookup_launchd_socket (DBusString *socket_path,
                                          const char *launchd_env_var,
                                          DBusError  *error);
-
-DBUS_PRIVATE_EXPORT
-dbus_bool_t _dbus_lookup_user_bus (dbus_bool_t *supported,
-                                   DBusString  *address,
-                                   DBusError   *error);
 
 /** Information about a UNIX user */
 typedef struct DBusUserInfo  DBusUserInfo;
@@ -143,11 +129,12 @@ void        _dbus_group_info_free     (DBusGroupInfo    *info);
 DBUS_PRIVATE_EXPORT
 dbus_uid_t    _dbus_geteuid (void);
 
-dbus_bool_t _dbus_parse_uid (const DBusString  *uid_str,
-                             dbus_uid_t        *uid);
-
 DBUS_PRIVATE_EXPORT
 void _dbus_close_all (void);
+DBUS_PRIVATE_EXPORT
+void _dbus_fd_set_all_close_on_exec (void);
+DBUS_PRIVATE_EXPORT
+void _dbus_fd_clear_close_on_exec (int fd);
 
 dbus_bool_t _dbus_append_address_from_socket (DBusSocket  fd,
                                               DBusString *address,
@@ -172,6 +159,8 @@ typedef void (* DBusSignalHandler) (int sig);
 
 void _dbus_set_signal_handler (int               sig,
                                DBusSignalHandler handler);
+
+dbus_bool_t _dbus_reset_oom_score_adj (const char **error_str_p);
 
 /** @} */
 

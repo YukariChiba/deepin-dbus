@@ -3,6 +3,8 @@
  *
  * Copyright (C) 2002, 2003, 2004, 2006  Red Hat Inc.
  *
+ * SPDX-License-Identifier: AFL-2.1 OR GPL-2.0-or-later
+ *
  * Licensed under the Academic Free License version 2.1
  *
  * This program is free software; you can redistribute it and/or modify
@@ -75,9 +77,7 @@ socket_finalize (DBusServer *server)
   dbus_free (socket_server->fds);
   dbus_free (socket_server->watch);
   dbus_free (socket_server->socket_name);
-  if (socket_server->noncefile)
-	_dbus_noncefile_delete (socket_server->noncefile, NULL);
-  dbus_free (socket_server->noncefile);
+  _dbus_noncefile_delete (&socket_server->noncefile, NULL);
   dbus_free (server);
 }
 
@@ -105,7 +105,7 @@ handle_new_client_fd_and_unlock (DBusServer *server,
   transport = _dbus_transport_new_for_socket (client_fd, &server->guid_hex, NULL);
   if (transport == NULL)
     {
-      _dbus_close_socket (client_fd, NULL);
+      _dbus_close_socket (&client_fd, NULL);
       SERVER_UNLOCK (server);
       return FALSE;
     }
@@ -174,7 +174,10 @@ socket_handle_watch (DBusWatch    *watch,
   for (i = 0 ; i < socket_server->n_fds ; i++)
     {
       if (socket_server->watch[i] == watch)
-        found = TRUE;
+        {
+          found = TRUE;
+	  break;
+        }
     }
   _dbus_assert (found);
 #endif
@@ -244,10 +247,7 @@ socket_disconnect (DBusServer *server)
         }
 
       if (_dbus_socket_is_valid (socket_server->fds[i]))
-        {
-          _dbus_close_socket (socket_server->fds[i], NULL);
-          _dbus_socket_invalidate (&socket_server->fds[i]);
-        }
+        _dbus_close_socket (&socket_server->fds[i], NULL);
     }
 
   if (socket_server->socket_name != NULL)
@@ -297,17 +297,17 @@ _dbus_server_new_for_socket (DBusSocket       *fds,
 
   socket_server = dbus_new0 (DBusServerSocket, 1);
   if (socket_server == NULL)
-    goto failed_0;
+    goto failed;
 
   socket_server->noncefile = noncefile;
 
   socket_server->fds = dbus_new (DBusSocket, n_fds);
   if (!socket_server->fds)
-    goto failed_0;
+    goto failed;
 
   socket_server->watch = dbus_new0 (DBusWatch *, n_fds);
   if (!socket_server->watch)
-    goto failed_1;
+    goto failed;
 
   for (i = 0 ; i < n_fds ; i++)
     {
@@ -319,7 +319,7 @@ _dbus_server_new_for_socket (DBusSocket       *fds,
                                socket_handle_watch, socket_server,
                                NULL);
       if (watch == NULL)
-        goto failed_2;
+        goto failed;
 
       socket_server->n_fds++;
       socket_server->fds[i] = fds[i];
@@ -329,7 +329,7 @@ _dbus_server_new_for_socket (DBusSocket       *fds,
   if (!_dbus_server_init_base (&socket_server->base,
                                &socket_vtable, address,
                                error))
-    goto failed_2;
+    goto failed;
 
   server = (DBusServer*)socket_server;
 
@@ -361,7 +361,7 @@ _dbus_server_new_for_socket (DBusSocket       *fds,
           _dbus_server_disconnect_unlocked (server);
           SERVER_UNLOCK (server);
           _dbus_server_finalize_base (&socket_server->base);
-          goto failed_2;
+          goto failed;
         }
     }
 
@@ -370,23 +370,26 @@ _dbus_server_new_for_socket (DBusSocket       *fds,
   _dbus_server_trace_ref (&socket_server->base, 0, 1, "new_for_socket");
   return (DBusServer*) socket_server;
 
- failed_2:
-  for (i = 0 ; i < n_fds ; i++)
+failed:
+  if (socket_server != NULL)
     {
-      if (socket_server->watch[i] != NULL)
+      if (socket_server->watch != NULL)
         {
-          _dbus_watch_invalidate (socket_server->watch[i]);
-          _dbus_watch_unref (socket_server->watch[i]);
-          socket_server->watch[i] = NULL;
+          for (i = 0; i < n_fds; i++)
+            {
+              if (socket_server->watch[i] != NULL)
+                {
+                  _dbus_watch_invalidate (socket_server->watch[i]);
+                  _dbus_watch_unref (socket_server->watch[i]);
+                  socket_server->watch[i] = NULL;
+                }
+            }
         }
+
+      dbus_free (socket_server->watch);
+      dbus_free (socket_server->fds);
+      dbus_free (socket_server);
     }
-  dbus_free (socket_server->watch);
-
- failed_1:
-  dbus_free (socket_server->fds);
-
- failed_0:
-  dbus_free (socket_server);
 
   if (error != NULL && !dbus_error_is_set (error))
     _DBUS_SET_OOM (error);
@@ -421,28 +424,27 @@ _dbus_server_new_for_tcp_socket (const char     *host,
                                  DBusError      *error,
                                  dbus_bool_t    use_nonce)
 {
-  DBusServer *server;
+  DBusServer *server = NULL;
   DBusSocket *listen_fds = NULL;
   int nlisten_fds = 0, i;
-  DBusString address;
-  DBusString host_str;
-  DBusString port_str;
-  DBusNonceFile *noncefile;
-  
-  _DBUS_ASSERT_ERROR_IS_CLEAR (error);
+  DBusString address = _DBUS_STRING_INIT_INVALID;
+  DBusString host_str;    /* Initialized as const later, not freed */
+  DBusString port_str = _DBUS_STRING_INIT_INVALID;
+  DBusNonceFile *noncefile = NULL;
+  const char *family_used = NULL;
 
-  noncefile = NULL;
+  _DBUS_ASSERT_ERROR_IS_CLEAR (error);
 
   if (!_dbus_string_init (&address))
     {
       dbus_set_error (error, DBUS_ERROR_NO_MEMORY, NULL);
-      return NULL;
+      goto failed;
     }
 
   if (!_dbus_string_init (&port_str))
     {
       dbus_set_error (error, DBUS_ERROR_NO_MEMORY, NULL);
-      goto failed_0;
+      goto failed;
     }
 
   if (host == NULL)
@@ -458,11 +460,12 @@ _dbus_server_new_for_tcp_socket (const char     *host,
 
   nlisten_fds =_dbus_listen_tcp_socket (bind, port, family,
                                         &port_str,
+                                        &family_used,
                                         &listen_fds, error);
   if (nlisten_fds <= 0)
     {
       _DBUS_ASSERT_ERROR_IS_SET(error);
-      goto failed_1;
+      goto failed;
     }
 
   _dbus_string_init_const (&host_str, host);
@@ -472,69 +475,52 @@ _dbus_server_new_for_tcp_socket (const char     *host,
       !_dbus_string_append (&address, _dbus_string_get_const_data(&port_str)))
     {
       dbus_set_error (error, DBUS_ERROR_NO_MEMORY, NULL);
-      goto failed_2;
+      goto failed;
     }
-  if (family &&
+  if (family_used &&
       (!_dbus_string_append (&address, ",family=") ||
-       !_dbus_string_append (&address, family)))
+       !_dbus_string_append (&address, family_used)))
     {
       dbus_set_error (error, DBUS_ERROR_NO_MEMORY, NULL);
-      goto failed_2;
+      goto failed;
     }
 
   if (use_nonce)
     {
-      noncefile = dbus_new0 (DBusNonceFile, 1);
-      if (noncefile == NULL)
-        {
-          dbus_set_error (error, DBUS_ERROR_NO_MEMORY, NULL);
-          goto failed_2;
-        }
-
-      if (!_dbus_noncefile_create (noncefile, error))
-          goto failed_3;
+      if (!_dbus_noncefile_create (&noncefile, error))
+        goto failed;
 
       if (!_dbus_string_append (&address, ",noncefile=") ||
           !_dbus_address_append_escaped (&address, _dbus_noncefile_get_path (noncefile)))
         {
           dbus_set_error (error, DBUS_ERROR_NO_MEMORY, NULL);
-          goto failed_4;
+          goto failed;
         }
-
     }
 
   server = _dbus_server_new_for_socket (listen_fds, nlisten_fds, &address, noncefile, error);
   if (server == NULL)
-    {
-      if (noncefile != NULL)
-        goto failed_4;
-      else
-        goto failed_2;
-    }
+    goto failed;
 
+  /* server has taken ownership of noncefile and the fds in listen_fds */
   _dbus_string_free (&port_str);
   _dbus_string_free (&address);
   dbus_free(listen_fds);
 
   return server;
 
- failed_4:
-  _dbus_noncefile_delete (noncefile, NULL);
+failed:
+  _dbus_noncefile_delete (&noncefile, NULL);
 
- failed_3:
-  dbus_free (noncefile);
+  if (listen_fds != NULL)
+    {
+      for (i = 0; i < nlisten_fds; i++)
+        _dbus_close_socket (&listen_fds[i], NULL);
+      dbus_free (listen_fds);
+    }
 
- failed_2:
-  for (i = 0 ; i < nlisten_fds ; i++)
-    _dbus_close_socket (listen_fds[i], NULL);
-  dbus_free(listen_fds);
-
- failed_1:
   _dbus_string_free (&port_str);
-
- failed_0:
   _dbus_string_free (&address);
-
   return NULL;
 }
 
@@ -612,6 +598,287 @@ _dbus_server_socket_own_filename (DBusServer *server,
   socket_server->socket_name = filename;
 }
 
+/**
+ * Creates a new server listening on the given Unix domain socket.
+ *
+ * @param path the path for the domain socket.
+ * @param abstract #TRUE to use abstract socket namespace
+ * @param error location to store reason for failure.
+ * @returns the new server, or #NULL on failure.
+ */
+DBusServer*
+_dbus_server_new_for_domain_socket (const char     *path,
+                                    dbus_bool_t     abstract,
+                                    DBusError      *error)
+{
+  DBusServer *server;
+  DBusSocket listen_fd;
+  DBusString address;
+  char *path_copy;
+  DBusString path_str;
+
+  _DBUS_ASSERT_ERROR_IS_CLEAR (error);
+
+  if (!_dbus_string_init (&address))
+    {
+      dbus_set_error (error, DBUS_ERROR_NO_MEMORY, NULL);
+      return NULL;
+    }
+
+  _dbus_string_init_const (&path_str, path);
+  if ((abstract &&
+       !_dbus_string_append (&address, "unix:abstract=")) ||
+      (!abstract &&
+       !_dbus_string_append (&address, "unix:path=")) ||
+      !_dbus_address_append_escaped (&address, &path_str))
+    {
+      dbus_set_error (error, DBUS_ERROR_NO_MEMORY, NULL);
+      goto failed_0;
+    }
+
+  if (abstract)
+    {
+      path_copy = NULL;
+    }
+  else
+    {
+      path_copy = _dbus_strdup (path);
+      if (path_copy == NULL)
+        {
+          dbus_set_error (error, DBUS_ERROR_NO_MEMORY, NULL);
+          goto failed_0;
+        }
+    }
+
+  listen_fd = _dbus_listen_unix_socket (path, abstract, error);
+
+  if (!_dbus_socket_is_valid (listen_fd))
+    {
+      _DBUS_ASSERT_ERROR_IS_SET (error);
+      goto failed_1;
+    }
+
+  server = _dbus_server_new_for_socket (&listen_fd, 1, &address, 0, error);
+  if (server == NULL)
+    {
+      goto failed_2;
+    }
+
+  if (path_copy != NULL)
+    _dbus_server_socket_own_filename(server, path_copy);
+
+  _dbus_string_free (&address);
+
+  return server;
+
+ failed_2:
+  _dbus_close_socket (&listen_fd, NULL);
+ failed_1:
+  dbus_free (path_copy);
+ failed_0:
+  _dbus_string_free (&address);
+
+  return NULL;
+}
+
+/**
+ * Creates a new Unix domain socket server listening under the given directory.
+ * This function is used for "unix:dir/tmpdir" kind of addresses.
+ *
+ * @param dir the path to a directory.
+ * @param error location to store reason for failure.
+ * @returns the new server, or #NULL on failure.
+ */
+static DBusServer *
+_dbus_server_new_for_dir (const char       *dir,
+                          DBusError        *error)
+{
+  DBusServer *server;
+  DBusString full_path;
+  DBusString filename;
+
+  if (!_dbus_string_init (&full_path))
+    {
+      dbus_set_error (error, DBUS_ERROR_NO_MEMORY, NULL);
+      return NULL;
+    }
+
+  if (!_dbus_string_init (&filename))
+    {
+      _dbus_string_free (&full_path);
+      dbus_set_error (error, DBUS_ERROR_NO_MEMORY, NULL);
+      return NULL;
+    }
+
+  if (!_dbus_string_append (&filename, "dbus-"))
+    {
+      _dbus_string_free (&full_path);
+      _dbus_string_free (&filename);
+      dbus_set_error (error, DBUS_ERROR_NO_MEMORY, NULL);
+      return NULL;
+    }
+
+  if (!_dbus_generate_random_ascii (&filename, 10, error))
+    {
+      _dbus_string_free (&full_path);
+      _dbus_string_free (&filename);
+      return NULL;
+    }
+
+  if (!_dbus_string_append (&full_path, dir) ||
+      !_dbus_concat_dir_and_file (&full_path, &filename))
+    {
+      _dbus_string_free (&full_path);
+      _dbus_string_free (&filename);
+      dbus_set_error (error, DBUS_ERROR_NO_MEMORY, NULL);
+      return NULL;
+    }
+
+  server =
+    _dbus_server_new_for_domain_socket (_dbus_string_get_const_data (&full_path),
+                                        FALSE,  /* not abstract */
+                                        error);
+
+  _dbus_string_free (&full_path);
+  _dbus_string_free (&filename);
+
+  return server;
+}
+
+/**
+ * Tries to interpret the address entry for UNIX socket
+ * addresses.
+ *
+ * Sets error if the result is not OK.
+ *
+ * @param entry an address entry
+ * @param server_p location to store a new DBusServer, or #NULL on failure.
+ * @param error location to store rationale for failure on bad address
+ * @returns the outcome
+ *
+ */
+DBusServerListenResult
+_dbus_server_listen_unix_socket (DBusAddressEntry *entry,
+                                 DBusServer      **server_p,
+                                 DBusError        *error)
+{
+  const char *method;
+
+  *server_p = NULL;
+
+  method = dbus_address_entry_get_method (entry);
+
+  if (strcmp (method, "unix") == 0)
+    {
+      const char *path = dbus_address_entry_get_value (entry, "path");
+      const char *dir = dbus_address_entry_get_value (entry, "dir");
+      const char *tmpdir = dbus_address_entry_get_value (entry, "tmpdir");
+      const char *abstract = dbus_address_entry_get_value (entry, "abstract");
+      const char *runtime = dbus_address_entry_get_value (entry, "runtime");
+      int mutually_exclusive_modes = 0;
+
+      mutually_exclusive_modes = (path != NULL) + (tmpdir != NULL) +
+        (abstract != NULL) + (runtime != NULL) + (dir != NULL);
+
+      if (mutually_exclusive_modes < 1)
+        {
+          _dbus_set_bad_address(error, "unix",
+                                "path or tmpdir or abstract or runtime or dir",
+                                NULL);
+          return DBUS_SERVER_LISTEN_BAD_ADDRESS;
+        }
+
+      if (mutually_exclusive_modes > 1)
+        {
+          _dbus_set_bad_address(error, NULL, NULL,
+                                "cannot specify two of \"path\", \"tmpdir\", \"abstract\", \"runtime\" and \"dir\" at the same time");
+          return DBUS_SERVER_LISTEN_BAD_ADDRESS;
+        }
+
+      if (runtime != NULL)
+        {
+          DBusString full_path;
+          DBusString filename;
+          const char *runtimedir;
+
+          if (strcmp (runtime, "yes") != 0)
+            {
+              _dbus_set_bad_address(error, NULL, NULL,
+                  "if given, the only value allowed for \"runtime\" is \"yes\"");
+              return DBUS_SERVER_LISTEN_BAD_ADDRESS;
+            }
+
+          runtimedir = _dbus_getenv ("XDG_RUNTIME_DIR");
+
+          if (runtimedir == NULL)
+            {
+              dbus_set_error (error,
+                  DBUS_ERROR_NOT_SUPPORTED, "\"XDG_RUNTIME_DIR\" is not set");
+              return DBUS_SERVER_LISTEN_DID_NOT_CONNECT;
+            }
+
+          _dbus_string_init_const (&filename, "bus");
+
+          if (!_dbus_string_init (&full_path))
+            {
+              _DBUS_SET_OOM (error);
+              return DBUS_SERVER_LISTEN_DID_NOT_CONNECT;
+            }
+
+          if (!_dbus_string_append (&full_path, runtimedir) ||
+              !_dbus_concat_dir_and_file (&full_path, &filename))
+            {
+              _dbus_string_free (&full_path);
+              _DBUS_SET_OOM (error);
+              return DBUS_SERVER_LISTEN_DID_NOT_CONNECT;
+            }
+
+          /* We can safely use filesystem sockets in the runtime directory,
+           * and they are preferred because they can be bind-mounted between
+           * Linux containers. */
+          *server_p = _dbus_server_new_for_domain_socket (
+              _dbus_string_get_const_data (&full_path),
+              FALSE, error);
+
+          _dbus_string_free (&full_path);
+        }
+      else if (tmpdir != NULL || dir != NULL)
+        {
+          /* tmpdir is now equivalent to dir. Previously it would try to
+           * use an abstract socket. */
+          if (tmpdir != NULL)
+            dir = tmpdir;
+
+          *server_p = _dbus_server_new_for_dir (dir, error);
+        }
+      else
+        {
+          if (path)
+            *server_p = _dbus_server_new_for_domain_socket (path, FALSE, error);
+          else
+            *server_p = _dbus_server_new_for_domain_socket (abstract, TRUE, error);
+        }
+
+      if (*server_p != NULL)
+        {
+          _DBUS_ASSERT_ERROR_IS_CLEAR(error);
+          return DBUS_SERVER_LISTEN_OK;
+        }
+      else
+        {
+          _DBUS_ASSERT_ERROR_IS_SET(error);
+          return DBUS_SERVER_LISTEN_DID_NOT_CONNECT;
+        }
+    }
+  else
+    {
+      /* If we don't handle the method, we return NULL with the
+       * error unset
+       */
+      _DBUS_ASSERT_ERROR_IS_CLEAR(error);
+      return DBUS_SERVER_LISTEN_NOT_HANDLED;
+    }
+}
+
 
 /** @} */
-

@@ -2,6 +2,7 @@
 /* dbus-send.c  Utility program to send messages from the command line
  *
  * Copyright (C) 2003 Philip Blundell <philb@gnu.org>
+ * SPDX-License-Identifier: GPL-2.0-or-later
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,18 +28,6 @@
 #include <dbus/dbus.h>
 #include "dbus/dbus-internals.h"
 
-#ifndef HAVE_STRTOLL
-#undef strtoll
-#define strtoll mystrtoll
-#include "strtoll.c"
-#endif
-
-#ifndef HAVE_STRTOULL
-#undef strtoull
-#define strtoull mystrtoull
-#include "strtoull.c"
-#endif
-
 #ifdef DBUS_WINCE
 #ifndef strdup
 #define strdup _strdup
@@ -54,7 +43,7 @@ static void usage (int ecode) _DBUS_GNUC_NORETURN;
 static void
 usage (int ecode)
 {
-  fprintf (stderr, "Usage: %s [--help] [--system | --session | --bus=ADDRESS | --peer=ADDRESS] [--dest=NAME] [--type=TYPE] [--print-reply[=literal]] [--reply-timeout=MSEC] <destination object path> <message name> [contents ...]\n", appname);
+  fprintf (stderr, "Usage: %s [--help] [--system | --session | --bus=ADDRESS | --peer=ADDRESS] [--sender=NAME] [--dest=NAME] [--type=TYPE] [--print-reply[=literal]] [--reply-timeout=MSEC] <destination object path> <message name> [contents ...]\n", appname);
   exit (ecode);
 }
 
@@ -68,6 +57,8 @@ handle_oom (dbus_bool_t success)
       exit (1);
     }
 }
+
+static int type_from_name (const char *arg, dbus_bool_t allow_container_types);
 
 static void
 append_arg (DBusMessageIter *iter, int type, const char *value)
@@ -151,6 +142,33 @@ append_arg (DBusMessageIter *iter, int type, const char *value)
 	}
       break;
 
+    case DBUS_TYPE_VARIANT:
+      {
+        DBusMessageIter subiter;
+
+        char sig[2] = "\0\0";
+        char *subtype = strdup (value);
+        char *c = NULL;
+
+        handle_oom (subtype != NULL);
+        c = strchr (subtype, ':');
+        if (!c)
+          {
+            fprintf (stderr, "%s: missing variant subtype specifier\n",
+                     appname);
+            exit (1);
+          }
+        *c = '\0';
+
+        sig[0] = (char) type_from_name (subtype, TRUE);
+
+        handle_oom (dbus_message_iter_open_container (iter, DBUS_TYPE_VARIANT,
+                                                      sig, &subiter));
+        append_arg (&subiter, sig[0], c + 1);
+        free (subtype);
+        ret = dbus_message_iter_close_container (iter, &subiter);
+        break;
+      }
     default:
       fprintf (stderr, "%s: Unsupported data type %c\n", appname, (char) type);
       exit (1);
@@ -210,7 +228,7 @@ append_dict (DBusMessageIter *iter, int keytype, int valtype, const char *value)
 }
 
 static int
-type_from_name (const char *arg)
+type_from_name (const char *arg, dbus_bool_t allow_container_types)
 {
   int type;
   if (!strcmp (arg, "string"))
@@ -235,6 +253,16 @@ type_from_name (const char *arg)
     type = DBUS_TYPE_BOOLEAN;
   else if (!strcmp (arg, "objpath"))
     type = DBUS_TYPE_OBJECT_PATH;
+  else if (!strcmp(arg, "variant"))
+    {
+        if (!allow_container_types)
+          {
+            fprintf (stderr, "%s: A variant cannot be the key in a dictionary\n", appname);
+            exit (1);
+          }
+
+        type = DBUS_TYPE_VARIANT;
+    }
   else
     {
       fprintf (stderr, "%s: Unknown type \"%s\"\n", appname, arg);
@@ -261,6 +289,7 @@ main (int argc, char *argv[])
   int message_type = DBUS_MESSAGE_TYPE_SIGNAL;
   const char *type_str = NULL;
   const char *address = NULL;
+  const char *sender = NULL;
   int is_bus = FALSE;
   int session_or_system = FALSE;
 
@@ -310,6 +339,16 @@ main (int argc, char *argv[])
           if (address[0] == '\0')
             {
               fprintf (stderr, "\"--peer=\" and \"--bus=\" require an ADDRESS\n");
+              usage (1);
+            }
+        }
+      else if (strstr (arg, "--sender=") == arg)
+        {
+          sender = strchr (arg, '=') + 1;
+
+          if (sender[0] == '\0')
+            {
+              fprintf (stderr, "\"--sender=\" requires a NAME\n");
               usage (1);
             }
         }
@@ -372,6 +411,12 @@ main (int argc, char *argv[])
       usage (1);
     }
 
+  if (sender != NULL && address != NULL && !is_bus)
+    {
+      fprintf (stderr, "\"--peer\" may not be used with \"--sender\"\n");
+      exit (1);
+    }
+
   if (type_str != NULL)
     {
       message_type = dbus_message_type_from_string (type_str);
@@ -383,13 +428,28 @@ main (int argc, char *argv[])
           exit (1);
         }
     }
-  
+
   dbus_error_init (&error);
 
   if (dest && !dbus_validate_bus_name (dest, &error))
     {
       fprintf (stderr, "invalid value (%s) of \"--dest\"\n", dest);
+      dbus_error_free (&error);
       usage (1);
+    }
+
+  if (sender && !dbus_validate_bus_name (sender, &error))
+    {
+      fprintf (stderr, "invalid value (%s) of \"--sender\"\n", sender);
+      dbus_error_free (&error);
+      usage (1);
+    }
+
+  if (!dbus_validate_path (path, &error))
+    {
+      fprintf (stderr, "%s\n", error.message);
+      dbus_error_free (&error);
+      exit (1);
     }
 
   if (address != NULL)
@@ -421,6 +481,29 @@ main (int argc, char *argv[])
         }
     }
 
+  if (sender != NULL)
+    {
+      int ret = dbus_bus_request_name (connection, sender, DBUS_NAME_FLAG_DO_NOT_QUEUE, &error);
+      switch (ret)
+        {
+        case DBUS_REQUEST_NAME_REPLY_PRIMARY_OWNER:
+          /* success */
+          break;
+        case DBUS_REQUEST_NAME_REPLY_EXISTS:
+          fprintf (stderr, "Requested name \"%s\" already has owner\n", sender);
+          exit (1);
+        case -1:
+          fprintf (stderr, "Failed to request sender name \"%s\": %s\n", sender, error.message);
+          dbus_error_free (&error);
+          exit (1);
+        default:
+          /* This should be unreachable if the bus is compliant */
+          fprintf (stderr, "Failed to request sender name \"%s\": unexpected result code %d\n",
+                   sender, ret);
+          exit (1);
+        }
+    }
+
   if (message_type == DBUS_MESSAGE_TYPE_METHOD_CALL)
     {
       char *last_dot;
@@ -433,7 +516,23 @@ main (int argc, char *argv[])
           exit (1);
         }
       *last_dot = '\0';
-      
+
+      if (!dbus_validate_interface (name, &error))
+        {
+          /* Typically this is "Interface name was not valid: \"xxx\""
+           * so we don't need to prefix anything special */
+          fprintf (stderr, "%s\n", error.message);
+          dbus_error_free (&error);
+          exit (1);
+        }
+
+      if (!dbus_validate_member (last_dot + 1, &error))
+        {
+          fprintf (stderr, "Invalid method name: %s\n", error.message);
+          dbus_error_free (&error);
+          exit (1);
+        }
+
       message = dbus_message_new_method_call (NULL,
                                               path,
                                               name,
@@ -453,7 +552,21 @@ main (int argc, char *argv[])
           exit (1);
         }
       *last_dot = '\0';
-      
+
+      if (!dbus_validate_interface (name, &error))
+        {
+          fprintf (stderr, "%s\n", error.message);
+          dbus_error_free (&error);
+          exit (1);
+        }
+
+      if (!dbus_validate_member (last_dot + 1, &error))
+        {
+          fprintf (stderr, "Invalid signal name: %s\n", error.message);
+          dbus_error_free (&error);
+          exit (1);
+        }
+
       message = dbus_message_new_signal (path, name, last_dot + 1);
       handle_oom (message != NULL);
     }
@@ -524,7 +637,7 @@ main (int argc, char *argv[])
       if (arg[0] == 0)
 	type2 = DBUS_TYPE_STRING;
       else
-	type2 = type_from_name (arg);
+	type2 = type_from_name (arg, FALSE);
 
       if (container_type == DBUS_TYPE_DICT_ENTRY)
 	{
@@ -537,7 +650,7 @@ main (int argc, char *argv[])
 	      exit (1);
 	    }
 	  *(c++) = 0;
-	  secondary_type = type_from_name (arg);
+	  secondary_type = type_from_name (arg, TRUE);
 	  sig[0] = DBUS_DICT_ENTRY_BEGIN_CHAR;
 	  sig[1] = type2;
 	  sig[2] = secondary_type;

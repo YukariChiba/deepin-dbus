@@ -4,6 +4,8 @@
  * Copyright (C) 2002, 2003, 2004, 2005  Red Hat Inc.
  * Copyright (C) 2002, 2003  CodeFactory AB
  *
+ * SPDX-License-Identifier: AFL-2.1 OR GPL-2.0-or-later
+ *
  * Licensed under the Academic Free License version 2.1
  *
  * This program is free software; you can redistribute it and/or modify
@@ -136,6 +138,15 @@ struct DBusMessageRealIter
   } u; /**< the type writer or reader that does all the work */
 };
 
+#if DBUS_SIZEOF_VOID_P > 8
+/*
+ * Architectures with 128-bit pointers were not supported in DBus 1.10, so we
+ * do no check for DBus 1.10 structure layout compatibility for such
+ * architectures (e.g. Arm Morello).
+ */
+#define CHECK_DBUS_1_10_BINARY_COMPATIBILITY 0
+#else
+#define CHECK_DBUS_1_10_BINARY_COMPATIBILITY 1
 /**
  * Layout of a DBusMessageIter on the stack in dbus 1.10.0. This is no
  * longer used, but for ABI compatibility we need to assert that the
@@ -158,6 +169,7 @@ typedef struct
   int pad2;
   void *pad3;
 } DBusMessageIter_1_10_0;
+#endif
 
 static void
 get_const_signature (DBusHeader        *header,
@@ -260,6 +272,18 @@ void _dbus_message_get_unix_fds(DBusMessage *message,
   *fds = NULL;
   *n_fds = 0;
 #endif
+}
+
+/**
+ * Remove every header field not known to this version of dbus.
+ *
+ * @param message the message
+ * @returns #FALSE if no memory
+ */
+dbus_bool_t
+_dbus_message_remove_unknown_fields (DBusMessage *message)
+{
+  return _dbus_header_remove_unknown_fields (&message->header);
 }
 
 /**
@@ -831,7 +855,7 @@ _dbus_message_iter_get_args_valist (DBusMessageIter *iter,
   /* copy var_args first, then we can do another iteration over it to
    * free memory and close unix fds if parse failed at some point.
    */
-  DBUS_VA_COPY (copy_args, var_args);
+  va_copy (copy_args, var_args);
 
   while (spec_type != DBUS_TYPE_INVALID)
     {
@@ -881,9 +905,9 @@ _dbus_message_iter_get_args_valist (DBusMessageIter *iter,
         }
       else if (dbus_type_is_basic (spec_type))
         {
-          DBusBasicValue *ptr;
+          void *ptr;
 
-          ptr = va_arg (var_args, DBusBasicValue*);
+          ptr = va_arg (var_args, void *);
 
           _dbus_assert (ptr != NULL);
 
@@ -894,7 +918,7 @@ _dbus_message_iter_get_args_valist (DBusMessageIter *iter,
         {
           int element_type;
           int spec_element_type;
-          const DBusBasicValue **ptr;
+          const void **ptr;
           int *n_elements_p;
           DBusTypeReader array;
 
@@ -916,7 +940,7 @@ _dbus_message_iter_get_args_valist (DBusMessageIter *iter,
           if (dbus_type_is_fixed (spec_element_type) &&
               element_type != DBUS_TYPE_UNIX_FD)
             {
-              ptr = va_arg (var_args, const DBusBasicValue**);
+              ptr = va_arg (var_args, const void **);
               n_elements_p = va_arg (var_args, int*);
 
               _dbus_assert (ptr != NULL);
@@ -924,8 +948,7 @@ _dbus_message_iter_get_args_valist (DBusMessageIter *iter,
 
               _dbus_type_reader_recurse (&real->u.reader, &array);
 
-              _dbus_type_reader_read_fixed_multi (&array,
-                                                  (void *) ptr, n_elements_p);
+              _dbus_type_reader_read_fixed_multi (&array, ptr, n_elements_p);
             }
           else if (_DBUS_TYPE_IS_STRINGLIKE (spec_element_type))
             {
@@ -1048,7 +1071,7 @@ _dbus_message_iter_get_args_valist (DBusMessageIter *iter,
           else if (dbus_type_is_basic (spec_type))
             {
               /* move the index forward */
-              va_arg (copy_args, DBusBasicValue *);
+              va_arg (copy_args, const void *);
             }
           else if (spec_type == DBUS_TYPE_ARRAY)
             {
@@ -1058,7 +1081,7 @@ _dbus_message_iter_get_args_valist (DBusMessageIter *iter,
               if (dbus_type_is_fixed (spec_element_type))
                 {
                   /* move the index forward */
-                  va_arg (copy_args, const DBusBasicValue **);
+                  va_arg (copy_args, const void **);
                   va_arg (copy_args, int *);
                 }
               else if (_DBUS_TYPE_IS_STRINGLIKE (spec_element_type))
@@ -1866,8 +1889,8 @@ dbus_message_append_args_valist (DBusMessage *message,
     {
       if (dbus_type_is_basic (type))
         {
-          const DBusBasicValue *value;
-          value = va_arg (var_args, const DBusBasicValue*);
+          const void *value;
+          value = va_arg (var_args, const void *);
 
           if (!dbus_message_iter_append_basic (&iter,
                                                type,
@@ -1893,10 +1916,10 @@ dbus_message_append_args_valist (DBusMessage *message,
           if (dbus_type_is_fixed (element_type) &&
               element_type != DBUS_TYPE_UNIX_FD)
             {
-              const DBusBasicValue **value;
+              const void **value;
               int n_elements;
 
-              value = va_arg (var_args, const DBusBasicValue**);
+              value = va_arg (var_args, const void **);
               n_elements = va_arg (var_args, int);
               
               if (!dbus_message_iter_append_fixed_array (&array,
@@ -2058,17 +2081,23 @@ _dbus_message_iter_init_common (DBusMessage         *message,
   _DBUS_STATIC_ASSERT (sizeof (DBusMessageRealIter) <= sizeof (DBusMessageIter));
   _DBUS_STATIC_ASSERT (_DBUS_ALIGNOF (DBusMessageRealIter) <=
       _DBUS_ALIGNOF (DBusMessageIter));
+#if CHECK_DBUS_1_10_BINARY_COMPATIBILITY
   /* A failure of these two assertions would indicate that we've broken
    * ABI on this platform since 1.10.0. */
   _DBUS_STATIC_ASSERT (sizeof (DBusMessageIter_1_10_0) ==
       sizeof (DBusMessageIter));
   _DBUS_STATIC_ASSERT (_DBUS_ALIGNOF (DBusMessageIter_1_10_0) ==
       _DBUS_ALIGNOF (DBusMessageIter));
+#endif
   /* If this static assertion fails, it means the DBusMessageIter struct
    * is not "packed", which might result in "iter = other_iter" not copying
    * every byte. */
+#if DBUS_SIZEOF_VOID_P > 8
+  _DBUS_STATIC_ASSERT (sizeof (DBusMessageIter) == 16 * sizeof (void *));
+#else
   _DBUS_STATIC_ASSERT (sizeof (DBusMessageIter) ==
       4 * sizeof (void *) + sizeof (dbus_uint32_t) + 9 * sizeof (int));
+#endif
 
   /* Since the iterator will read or write who-knows-what from the
    * message, we need to get in the right byte order
@@ -2664,7 +2693,7 @@ _dbus_message_iter_abandon_signature (DBusMessageRealIter *real)
   dbus_free (str);
 }
 
-#ifndef DBUS_DISABLE_CHECKS
+#if defined(DBUS_ENABLE_CHECKS) || defined(DBUS_ENABLE_ASSERT)
 static dbus_bool_t
 _dbus_message_iter_append_check (DBusMessageRealIter *iter)
 {
@@ -2679,7 +2708,7 @@ _dbus_message_iter_append_check (DBusMessageRealIter *iter)
 
   return TRUE;
 }
-#endif /* DBUS_DISABLE_CHECKS */
+#endif
 
 #ifdef HAVE_UNIX_FD_PASSING
 static int *
@@ -4063,6 +4092,57 @@ dbus_message_contains_unix_fds(DBusMessage *message)
 #endif
 }
 
+/**
+ * Sets the container instance this message was sent from.
+ *
+ * The path must contain only valid characters for an object path
+ * as defined in the D-Bus specification.
+ *
+ * @param message the message
+ * @param object_path the path or #NULL to unset
+ * @returns #FALSE if not enough memory
+ */
+dbus_bool_t
+dbus_message_set_container_instance (DBusMessage   *message,
+                                     const char    *object_path)
+{
+  _dbus_return_val_if_fail (message != NULL, FALSE);
+  _dbus_return_val_if_fail (!message->locked, FALSE);
+  _dbus_return_val_if_fail (object_path == NULL ||
+                            _dbus_check_is_valid_path (object_path),
+                            FALSE);
+
+  return set_or_delete_string_field (message,
+                                     DBUS_HEADER_FIELD_CONTAINER_INSTANCE,
+                                     DBUS_TYPE_OBJECT_PATH,
+                                     object_path);
+}
+
+/**
+ * Gets the container instance this message was sent from, or #NULL
+ * if none.
+ *
+ * The returned string becomes invalid if the message is
+ * modified, since it points into the wire-marshaled message data.
+ *
+ * @param message the message
+ * @returns the path (should not be freed) or #NULL
+ */
+const char *
+dbus_message_get_container_instance (DBusMessage *message)
+{
+  const char *v;
+
+  _dbus_return_val_if_fail (message != NULL, NULL);
+
+  v = NULL; /* in case field doesn't exist */
+  _dbus_header_get_field_basic (&message->header,
+                                DBUS_HEADER_FIELD_CONTAINER_INSTANCE,
+                                DBUS_TYPE_OBJECT_PATH,
+                                (void *) &v);
+  return v;
+}
+
 /** @} */
 
 /**
@@ -4161,10 +4241,8 @@ _dbus_message_loader_unref (DBusMessageLoader *loader)
       close_unix_fds(loader->unix_fds, &loader->n_unix_fds);
       dbus_free(loader->unix_fds);
 #endif
-      _dbus_list_foreach (&loader->messages,
-                          (DBusForeachFunction) dbus_message_unref,
-                          NULL);
-      _dbus_list_clear (&loader->messages);
+      _dbus_list_clear_full (&loader->messages,
+                             (DBusFreeFunction) dbus_message_unref);
       _dbus_string_free (&loader->data);
       dbus_free (loader);
     }
@@ -4436,8 +4514,7 @@ load_message (DBusMessageLoader *loader,
                           fields_array_len,
                           header_len,
                           body_len,
-                          &loader->data, 0,
-                          _dbus_string_get_length (&loader->data)))
+                          &loader->data))
     {
       _dbus_verbose ("Failed to load header for new message code %d\n", validity);
 
@@ -5093,7 +5170,7 @@ dbus_message_demarshal (const char *str,
                         int         len,
                         DBusError  *error)
 {
-  DBusMessageLoader *loader;
+  DBusMessageLoader *loader = NULL;
   DBusString *buffer;
   DBusMessage *msg;
 
@@ -5102,7 +5179,7 @@ dbus_message_demarshal (const char *str,
   loader = _dbus_message_loader_new ();
 
   if (loader == NULL)
-    return NULL;
+    goto fail_oom;
 
   _dbus_message_loader_get_buffer (loader, &buffer, NULL, NULL);
 
@@ -5126,6 +5203,9 @@ dbus_message_demarshal (const char *str,
   return msg;
 
  fail_corrupt:
+  if (loader->corruption_reason == DBUS_VALIDITY_UNKNOWN_OOM_ERROR)
+    goto fail_oom;
+
   dbus_set_error (error, DBUS_ERROR_INVALID_ARGS, "Message is corrupted (%s)",
                   _dbus_validity_to_error_message (loader->corruption_reason));
   _dbus_message_loader_unref (loader);
@@ -5133,7 +5213,10 @@ dbus_message_demarshal (const char *str,
 
  fail_oom:
   _DBUS_SET_OOM (error);
-  _dbus_message_loader_unref (loader);
+
+  if (loader != NULL)
+    _dbus_message_loader_unref (loader);
+
   return NULL;
 }
 
@@ -5397,14 +5480,18 @@ oom:
 const char *
 _dbus_variant_get_signature (DBusVariant *self)
 {
-  unsigned char len;
   const char *ret;
+#ifndef DBUS_DISABLE_ASSERT
+  unsigned char len;
+#endif
 
   _dbus_assert (self != NULL);
 
+#ifndef DBUS_DISABLE_ASSERT
   /* Here we make use of the fact that the serialization of a variant starts
    * with the 1-byte length, then that many bytes of signature, then \0. */
   len = _dbus_string_get_byte (&self->data, 0);
+#endif
   ret = _dbus_string_get_const_data_len (&self->data, 1, len);
   _dbus_assert (strlen (ret) == len);
   return ret;

@@ -15,7 +15,7 @@ The "and coordination" part is important; D-Bus provides a bus daemon that does 
  - start services on demand
  - support single-instance applications
 
-See http://www.freedesktop.org/software/dbus/ for lots of documentation, 
+See https://www.freedesktop.org/wiki/Software/dbus/ for lots of documentation,
 mailing lists, etc.
 
 See also the file CONTRIBUTING.md for notes of interest to developers
@@ -35,9 +35,9 @@ Security
 
 If you find a security vulnerability that is not known to the public,
 please report it privately to dbus-security@lists.freedesktop.org
-or by reporting a freedesktop.org bug that is marked as
-restricted to the "D-BUS security group" (you might need to "Show
-Advanced Fields" to have that option).
+or by reporting a Gitlab issue at
+https://gitlab.freedesktop.org/dbus/dbus/issues/new and marking it
+as "confidential".
 
 On Unix systems, the system bus (dbus-daemon --system) is designed
 to be a security boundary between users with different privileges.
@@ -80,28 +80,62 @@ Development snapshots make no ABI stability guarantees for new ABI
 introduced since the last stable release. Development snapshots are
 likely to have more bugs than stable releases, obviously.
 
-Configuration 
+Configuration
 ===
 
-dbus could be build by using autotools or cmake. 
+This branch of dbus can be built by using Autotools, CMake or Meson.
+The Meson build system is currently considered experimental, but is
+likely to become the recommended build system in future.
 
-When using autotools the configure step is initiated by running ./configure 
+Older versions of dbus required Autotools or CMake, with Autotools
+recommended for Unix systems and CMake recommended for Windows systems.
+
+When using Autotools, the configure step is initiated by running ./configure
 with or without additional configuration flags. dbus requires GNU Make
 (on BSD systems, this is typically called gmake) or a "make" implementation
 with compatible extensions.
 
-When using cmake the configure step is initiated by running the cmake 
-program with or without additional configuration flags. 
+When using CMake, the configure step is initiated by running the cmake
+program with or without additional configuration flags.
+
+Meson only supports out-of-tree builds, and must be passed a directory to put
+built and generated sources into. We'll call that directory "build" here. It's
+recommended to create a separate build directory for each configuration you
+might want to use.
+
+Basic configuration is done with:
+
+``` sh
+meson build/
+```
+
+This will create the build directory. If any dependencies are missing, you can
+install them, or try to remove the dependency with a Meson configuration option
+(see below).
 
 Configuration flags
 ===
 
-When using autotools, run "./configure --help" to see the possible
+When using Autotools, run "./configure --help" to see the possible
 configuration options and environment variables.
 
-When using cmake, inspect README.cmake to see the possible
+When using CMake, inspect README.cmake to see the possible
 configuration options and environment variables.
-    
+
+When using Meson, to review the options which Meson chose, run:
+
+``` sh
+meson configure build/
+```
+
+With additional arguments meson configure can be used to change options for a
+previously configured build directory. All options passed to this command are in
+the form `-D "option"="value"`. For example:
+
+``` sh
+meson configure build/ -Dprefix=/tmp/install
+```
+
 API/ABI Policy
 ===
 
@@ -166,20 +200,10 @@ for your binding.
 Bootstrapping D-Bus on new platforms
 ===
 
-A full build of D-Bus, with all regression tests enabled and run, has some
-dependencies which themselves depend on D-Bus, either for compilation or
-for some of *their* regression tests: GLib, dbus-glib and dbus-python are
-currently affected.
+A full build of dbus, with all regression tests enabled and run, depends
+on GLib. A full build of GLib, with all regression tests enabled and run,
+depends on dbus.
 
-To avoid circular dependencies, when bootstrapping D-Bus for the first time
-on a new OS or CPU architecture, you can either cross-compile some of
-those components, or choose the build order and options carefully:
-
-* build and install D-Bus without tests
-  - do not use the --enable-modular-tests=yes configure option
-  - do not use the --enable-tests=yes configure option
-* build and install GLib, again without tests
-* use those versions of libdbus and GLib to build and install dbus-glib
-* ... and use those to install dbus-python
-* rebuild libdbus; this time you can run all of the tests
-* rebuild GLib; this time you can run all of the tests
+To break this cycle, don't enable full test coverage (for at least one
+of those projects) during bootstrapping. You can rebuild with full test
+coverage after you have built both dbus and GLib at least once.

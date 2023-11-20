@@ -3,6 +3,8 @@
  *
  * Copyright (C) 2004, 2005 Red Hat, Inc.
  *
+ * SPDX-License-Identifier: AFL-2.1 OR GPL-2.0-or-later
+ *
  * Licensed under the Academic Free License version 2.1
  *
  * This program is free software; you can redistribute it and/or modify
@@ -304,14 +306,11 @@ variant_reader_recurse (DBusTypeReader *sub,
 #endif
 }
 
+/* return true if no more elements remain */
 static dbus_bool_t
 array_reader_check_finished (const DBusTypeReader *reader)
 {
   int end_pos;
-
-  /* return the array element type if elements remain, and
-   * TYPE_INVALID otherwise
-   */
 
   end_pos = reader->u.array.start_pos + array_reader_get_array_len (reader);
 
@@ -922,7 +921,7 @@ _dbus_type_reader_get_array_length (const DBusTypeReader  *reader)
  */
 void
 _dbus_type_reader_read_fixed_multi (const DBusTypeReader  *reader,
-                                    void                  *value,
+                                    const void           **value,
                                     int                   *n_elements)
 {
   int element_type;
@@ -956,12 +955,11 @@ _dbus_type_reader_read_fixed_multi (const DBusTypeReader  *reader,
   _dbus_assert (remaining_len <= total_len);
 
   if (remaining_len == 0)
-    *(const DBusBasicValue**) value = NULL;
+    *value = NULL;
   else
-    *(const DBusBasicValue**) value =
-      (void*) _dbus_string_get_const_data_len (reader->value_str,
-                                               reader->value_pos,
-                                               remaining_len);
+    *value = _dbus_string_get_const_data_len (reader->value_str,
+                                              reader->value_pos,
+                                              remaining_len);
 
   *n_elements = remaining_len / alignment;
   _dbus_assert ((remaining_len % alignment) == 0);

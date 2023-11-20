@@ -86,9 +86,10 @@ setup (Fixture *f,
   dbus_error_init (&f->e);
   g_queue_init (&f->client_messages);
 
-  if ((g_str_has_prefix (addr, "tcp:") ||
-       g_str_has_prefix (addr, "nonce-tcp:")) &&
-      !test_check_tcp_works ())
+  if ((g_str_has_prefix (addr, "unix:") && !test_check_af_unix_works ()) ||
+      ((g_str_has_prefix (addr, "tcp:") ||
+        g_str_has_prefix (addr, "nonce-tcp:")) &&
+       !test_check_tcp_works ()))
     {
       f->skip = TRUE;
       return;
@@ -275,6 +276,7 @@ test_corrupt (Fixture *f,
    * fd, whereas DBusLoop + DBusSocketSetEpoll doesn't. On Unix
    * we could use dup() but that isn't portable to Windows :-(
    */
+  test_connection_shutdown (f->ctx, f->server_conn);
   dbus_connection_close (f->server_conn);
   dbus_connection_unref (f->server_conn);
   f->server_conn = NULL;
@@ -362,6 +364,7 @@ test_byte_order (Fixture *f,
   dbus_message_unref (message);
 
   /* Free the DBusConnection before the GSocket, as above. */
+  test_connection_shutdown (f->ctx, f->server_conn);
   dbus_connection_close (f->server_conn);
   dbus_connection_unref (f->server_conn);
   f->server_conn = NULL;
@@ -391,7 +394,7 @@ teardown (Fixture *f,
 
   if (f->server != NULL)
     {
-      dbus_server_disconnect (f->server);
+      test_server_shutdown (f->ctx, f->server);
       dbus_server_unref (f->server);
       f->server = NULL;
     }
@@ -403,23 +406,32 @@ int
 main (int argc,
     char **argv)
 {
+  int ret;
+#ifdef DBUS_UNIX
+  char *tmp = _dbus_strdup ("/tmp");
+#else
+  char *tmp = dbus_address_escape_value (g_get_tmp_dir ());
+#endif
+  gchar *unix_tmpdir = g_strdup_printf ("unix:tmpdir=%s", tmp);
+
   test_init (&argc, &argv);
 
   g_test_add ("/corrupt/tcp", Fixture, "tcp:host=127.0.0.1", setup,
       test_corrupt, teardown);
 
-#ifdef DBUS_UNIX
-  g_test_add ("/corrupt/unix", Fixture, "unix:tmpdir=/tmp", setup,
+  g_test_add ("/corrupt/unix", Fixture, unix_tmpdir, setup,
       test_corrupt, teardown);
-#endif
 
   g_test_add ("/corrupt/byte-order/tcp", Fixture, "tcp:host=127.0.0.1", setup,
       test_byte_order, teardown);
 
-#ifdef DBUS_UNIX
-  g_test_add ("/corrupt/byte-order/unix", Fixture, "unix:tmpdir=/tmp", setup,
+  g_test_add ("/corrupt/byte-order/unix", Fixture, unix_tmpdir, setup,
       test_byte_order, teardown);
-#endif
 
-  return g_test_run ();
+  ret = g_test_run ();
+  dbus_shutdown ();
+
+  g_free (unix_tmpdir);
+  dbus_free (tmp);
+  return ret;
 }

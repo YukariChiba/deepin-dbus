@@ -1,11 +1,13 @@
 /* -*- mode: C; c-file-style: "gnu"; indent-tabs-mode: nil; -*- */
-/* dbus-server-debug-pipe.c In-proc debug server implementation 
+/* dbus-server-debug-pipe.c In-proc debug server implementation
  *
  * Copyright (C) 2003  CodeFactory AB
  * Copyright (C) 2003, 2004  Red Hat, Inc.
  *
+ * SPDX-License-Identifier: AFL-2.1 OR GPL-2.0-or-later
+ *
  * Licensed under the Academic Free License version 2.1
- * 
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -15,7 +17,7 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
@@ -260,8 +262,8 @@ _dbus_transport_debug_pipe_new (const char     *server_name,
                                                      NULL, &address);
   if (client_transport == NULL)
     {
-      _dbus_close_socket (client_fd, NULL);
-      _dbus_close_socket (server_fd, NULL);
+      _dbus_close_socket (&client_fd, NULL);
+      _dbus_close_socket (&server_fd, NULL);
       dbus_set_error (error, DBUS_ERROR_NO_MEMORY, NULL);
       _dbus_string_free (&address);
       return NULL;
@@ -276,7 +278,7 @@ _dbus_transport_debug_pipe_new (const char     *server_name,
   if (server_transport == NULL)
     {
       _dbus_transport_unref (client_transport);
-      _dbus_close_socket (server_fd, NULL);
+      _dbus_close_socket (&server_fd, NULL);
       dbus_set_error (error, DBUS_ERROR_NO_MEMORY, NULL);
       return NULL;
     }
@@ -429,4 +431,3 @@ _dbus_transport_open_debug_pipe (DBusAddressEntry  *entry,
 /** @} */
 
 #endif /* DBUS_ENABLE_EMBEDDED_TESTS */
-

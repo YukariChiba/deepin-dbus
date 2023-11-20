@@ -1,10 +1,12 @@
 /* -*- mode: C; c-file-style: "gnu"; indent-tabs-mode: nil; -*- */
 /* dbus-userdb-util.c Would be in dbus-userdb.c, but not used in libdbus
- * 
+ *
  * Copyright (C) 2003, 2004, 2005  Red Hat, Inc.
  *
+ * SPDX-License-Identifier: AFL-2.1 OR GPL-2.0-or-later
+ *
  * Licensed under the Academic Free License version 2.1
- * 
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -14,7 +16,7 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
@@ -27,7 +29,14 @@
 #include "dbus-test.h"
 #include "dbus-internals.h"
 #include "dbus-protocol.h"
+#include <dbus/dbus-test-tap.h>
 #include <string.h>
+
+/* It isn't obvious from its name, but this file is part of the Unix
+ * system-dependent part of libdbus. */
+#if defined(DBUS_WIN) || !defined(DBUS_UNIX)
+#error "This file only makes sense on Unix OSs"
+#endif
 
 #ifdef HAVE_SYSTEMD
 #include <systemd/sd-login.h>
@@ -58,11 +67,6 @@ dbus_bool_t
 _dbus_is_console_user (dbus_uid_t uid,
 		       DBusError *error)
 {
-
-  DBusUserDatabase *db;
-  const DBusUserInfo *info;
-  dbus_bool_t result = FALSE;
-
 #ifdef HAVE_SYSTEMD
   /* check if we have logind */
   if (access ("/run/systemd/seats/", F_OK) >= 0)
@@ -113,35 +117,7 @@ _dbus_is_console_user (dbus_uid_t uid,
 
 #endif /* HAVE_CONSOLE_OWNER_FILE */
 
-  if (!_dbus_user_database_lock_system ())
-    {
-      _DBUS_SET_OOM (error);
-      return FALSE;
-    }
-
-  db = _dbus_user_database_get_system ();
-  if (db == NULL)
-    {
-      dbus_set_error (error, DBUS_ERROR_FAILED, "Could not get system database.");
-      _dbus_user_database_unlock_system ();
-      return FALSE;
-    }
-
-  /* TPTD: this should be cache-safe, we've locked the DB and
-    _dbus_user_at_console doesn't pass it on. */
-  info = _dbus_user_database_lookup (db, uid, NULL, error);
-
-  if (info == NULL)
-    {
-      _dbus_user_database_unlock_system ();
-       return FALSE;
-    }
-
-  result = _dbus_user_at_console (info->username, error);
-
-  _dbus_user_database_unlock_system ();
-
-  return result;
+  return FALSE;
 }
 
 /**
@@ -183,8 +159,10 @@ _dbus_get_group_id (const DBusString  *groupname,
       return FALSE;
     }
 
-  if (!_dbus_user_database_get_groupname (db, groupname,
-                                          &info, NULL))
+  info = _dbus_user_database_lookup_group (db, DBUS_GID_UNSET, groupname,
+                                           NULL);
+
+  if (info == NULL)
     {
       _dbus_user_database_unlock_system ();
       return FALSE;
@@ -356,48 +334,6 @@ _dbus_user_database_lookup_group (DBusUserDatabase *db,
     }
 }
 
-
-/**
- * Gets the user information for the given group name,
- * returned group info should not be freed. 
- *
- * @param db user database
- * @param groupname the group name
- * @param info return location for const ref to group info
- * @param error error location
- * @returns #FALSE if error is set
- */
-dbus_bool_t
-_dbus_user_database_get_groupname (DBusUserDatabase     *db,
-                                   const DBusString     *groupname,
-                                   const DBusGroupInfo **info,
-                                   DBusError            *error)
-{
-  *info = _dbus_user_database_lookup_group (db, DBUS_GID_UNSET, groupname, error);
-  return *info != NULL;
-}
-
-/**
- * Gets the user information for the given GID,
- * returned group info should not be freed. 
- *
- * @param db user database
- * @param gid the group ID
- * @param info return location for const ref to group info
- * @param error error location
- * @returns #FALSE if error is set
- */
-dbus_bool_t
-_dbus_user_database_get_gid (DBusUserDatabase     *db,
-                             dbus_gid_t            gid,
-                             const DBusGroupInfo **info,
-                             DBusError            *error)
-{
-  *info = _dbus_user_database_lookup_group (db, gid, NULL, error);
-  return *info != NULL;
-}
-
-
 /**
  * Gets all groups  corresponding to the given UID. Returns #FALSE
  * if no memory, or user isn't known, but always initializes
@@ -456,58 +392,3 @@ _dbus_groups_from_uid (dbus_uid_t         uid,
   return TRUE;
 }
 /** @} */
-
-#ifdef DBUS_ENABLE_EMBEDDED_TESTS
-#include <stdio.h>
-
-/**
- * Unit test for dbus-userdb.c.
- * 
- * @returns #TRUE on success.
- */
-dbus_bool_t
-_dbus_userdb_test (const char *test_data_dir)
-{
-  const DBusString *username;
-  const DBusString *homedir;
-  dbus_uid_t uid;
-  unsigned long *group_ids;
-  int n_group_ids, i;
-  DBusError error;
-
-  if (!_dbus_username_from_current_process (&username))
-    _dbus_assert_not_reached ("didn't get username");
-
-  if (!_dbus_homedir_from_current_process (&homedir))
-    _dbus_assert_not_reached ("didn't get homedir");  
-
-  if (!_dbus_get_user_id (username, &uid))
-    _dbus_assert_not_reached ("didn't get uid");
-
-  if (!_dbus_groups_from_uid (uid, &group_ids, &n_group_ids))
-    _dbus_assert_not_reached ("didn't get groups");
-
-  printf ("    Current user: %s homedir: %s gids:",
-          _dbus_string_get_const_data (username),
-          _dbus_string_get_const_data (homedir));
-
-  for (i=0; i<n_group_ids; i++)
-      printf(" %ld", group_ids[i]);
-
-  printf ("\n");
-
-  dbus_error_init (&error);
-  printf ("Is Console user: %i\n",
-          _dbus_is_console_user (uid, &error));
-  printf ("Invocation was OK: %s\n", error.message ? error.message : "yes");
-  dbus_error_free (&error);
-  printf ("Is Console user 4711: %i\n",
-          _dbus_is_console_user (4711, &error));
-  printf ("Invocation was OK: %s\n", error.message ? error.message : "yes");
-  dbus_error_free (&error);
-
-  dbus_free (group_ids);
-
-  return TRUE;
-}
-#endif /* DBUS_ENABLE_EMBEDDED_TESTS */

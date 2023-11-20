@@ -1,10 +1,14 @@
 /* -*- mode: C; c-file-style: "gnu"; indent-tabs-mode: nil; -*- */
 /* dbus-mempool.h Memory pools
- * 
+ *
  * Copyright (C) 2002, 2003  Red Hat, Inc.
+ * Copyright (C) 2003  CodeFactory AB
+ * Copyright (C) 2011-2012  Collabora Ltd.
+ *
+ * SPDX-License-Identifier: AFL-2.1 OR GPL-2.0-or-later
  *
  * Licensed under the Academic Free License version 2.1
- * 
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -14,7 +18,7 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
@@ -64,12 +68,6 @@ struct DBusFreedElement
 };
 
 /**
- * The dummy size of the variable-length "elements"
- * field in DBusMemBlock
- */
-#define ELEMENT_PADDING 4
-
-/**
  * Typedef for DBusMemBlock so the struct can recursively
  * point to itself.
  */
@@ -86,19 +84,31 @@ struct DBusMemBlock
                         *   when we free the mem pool.
                         */
 
-  /* this is a long so that "elements" is aligned */
-  long used_so_far;     /**< bytes of this block already allocated as elements. */
-  
-  unsigned char elements[ELEMENT_PADDING]; /**< the block data, actually allocated to required size */
+  size_t used_so_far;       /**< bytes of this block already allocated as elements. */
+#if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
+  /*
+   * Ensure that elements is aligned correctly. For all supported pre-C11
+   * targets, the size_t above should ensure that the elements array is
+   * sufficiently aligned (this is checked in the static assert below).
+   */
+  _Alignas (dbus_max_align_t)
+#endif
+  unsigned char elements[]; /**< the block data, actually allocated to required size */
 };
+
+_DBUS_STATIC_ASSERT (_DBUS_IS_ALIGNED (sizeof (struct DBusMemBlock),
+                                       _DBUS_ALIGNOF (dbus_max_align_t)));
+_DBUS_STATIC_ASSERT (_DBUS_IS_ALIGNED (offsetof (struct DBusMemBlock,
+                                                 elements),
+                                       _DBUS_ALIGNOF (dbus_max_align_t)));
 
 /**
  * Internals fields of DBusMemPool
  */
 struct DBusMemPool
 {
-  int element_size;                /**< size of a single object in the pool */
-  int block_size;                  /**< size of most recently allocated block */
+  size_t element_size;             /**< size of a single object in the pool */
+  size_t block_size;               /**< size of most recently allocated block */
   unsigned int zero_elements : 1;  /**< whether to zero-init allocated elements */
 
   DBusFreedElement *free_elements; /**< a free list of elements to recycle */
@@ -147,17 +157,20 @@ _dbus_mem_pool_new (int element_size,
   /* Make the element size at least 8 bytes. */
   if (element_size < 8)
     element_size = 8;
-  
+  if (element_size < (int) sizeof (void *))
+    element_size = sizeof (void *);
+
   /* these assertions are equivalent but the first is more clear
    * to programmers that see it fail.
    */
   _dbus_assert (element_size >= (int) sizeof (void*));
   _dbus_assert (element_size >= (int) sizeof (DBusFreedElement));
 
-  /* align the element size to a pointer boundary so we won't get bus
-   * errors under other architectures.  
+  /* align the element size to be suitable for the most-aligned type
+   * that we care about (in practice usually a pointer).
    */
-  pool->element_size = _DBUS_ALIGN_VALUE (element_size, sizeof (void *));
+  pool->element_size =
+      _DBUS_ALIGN_VALUE (element_size, _DBUS_ALIGNOF (dbus_max_align_t));
 
   pool->zero_elements = zero_elements != FALSE;
 
@@ -217,7 +230,7 @@ _dbus_mem_pool_alloc (DBusMemPool *pool)
   if (_dbus_disable_mem_pools ())
     {
       DBusMemBlock *block;
-      int alloc_size;
+      size_t alloc_size;
       
       /* This is obviously really silly, but it's
        * debug-mode-only code that is compiled out
@@ -225,10 +238,9 @@ _dbus_mem_pool_alloc (DBusMemPool *pool)
        * is a constant expression FALSE so this block
        * should vanish)
        */
-      
-      alloc_size = sizeof (DBusMemBlock) - ELEMENT_PADDING +
-        pool->element_size;
-      
+
+      alloc_size = sizeof (DBusMemBlock) + pool->element_size;
+
       if (pool->zero_elements)
         block = dbus_malloc0 (alloc_size);
       else
@@ -242,6 +254,8 @@ _dbus_mem_pool_alloc (DBusMemPool *pool)
 
           VALGRIND_MEMPOOL_ALLOC (pool, (void *) &block->elements[0],
               pool->element_size);
+          _dbus_assert (_DBUS_IS_ALIGNED (&block->elements[0],
+                                          _DBUS_ALIGNOF (dbus_max_align_t)));
           return (void*) &block->elements[0];
         }
       else
@@ -267,7 +281,8 @@ _dbus_mem_pool_alloc (DBusMemPool *pool)
             memset (element, '\0', pool->element_size);
 
           pool->allocated_elements += 1;
-
+          _dbus_assert (
+              _DBUS_IS_ALIGNED (element, _DBUS_ALIGNOF (dbus_max_align_t)));
           return element;
         }
       else
@@ -279,7 +294,7 @@ _dbus_mem_pool_alloc (DBusMemPool *pool)
             {
               /* Need a new block */
               DBusMemBlock *block;
-              int alloc_size;
+              size_t alloc_size;
 #ifdef DBUS_ENABLE_EMBEDDED_TESTS
               int saved_counter;
 #endif
@@ -292,7 +307,7 @@ _dbus_mem_pool_alloc (DBusMemPool *pool)
                                  pool->element_size) == 0);
                 }
 
-              alloc_size = sizeof (DBusMemBlock) - ELEMENT_PADDING + pool->block_size;
+              alloc_size = sizeof (DBusMemBlock) + pool->block_size;
 
 #ifdef DBUS_ENABLE_EMBEDDED_TESTS
               /* We save/restore the counter, so that memory pools won't
@@ -309,6 +324,8 @@ _dbus_mem_pool_alloc (DBusMemPool *pool)
                 block = dbus_malloc0 (alloc_size);
               else
                 block = dbus_malloc (alloc_size);
+              _dbus_assert (
+                  _DBUS_IS_ALIGNED (block, _DBUS_ALIGNOF (dbus_max_align_t)));
 
 #ifdef DBUS_ENABLE_EMBEDDED_TESTS
               _dbus_set_fail_alloc_counter (saved_counter);
@@ -322,14 +339,16 @@ _dbus_mem_pool_alloc (DBusMemPool *pool)
               block->next = pool->blocks;
               pool->blocks = block;          
             }
-      
+
           element = &pool->blocks->elements[pool->blocks->used_so_far];
-          
+
           pool->blocks->used_so_far += pool->element_size;
 
           pool->allocated_elements += 1;
 
           VALGRIND_MEMPOOL_ALLOC (pool, element, pool->element_size);
+          _dbus_assert (
+              _DBUS_IS_ALIGNED (element, _DBUS_ALIGNOF (dbus_max_align_t)));
           return element;
         }
     }
@@ -448,200 +467,3 @@ _dbus_mem_pool_get_stats (DBusMemPool   *pool,
 #endif /* DBUS_ENABLE_STATS */
 
 /** @} */
-
-#ifdef DBUS_ENABLE_EMBEDDED_TESTS
-#include "dbus-test.h"
-#include <stdio.h>
-#include <time.h>
-
-static void
-time_for_size (int size)
-{
-  int i;
-  int j;
-#ifdef DBUS_ENABLE_VERBOSE_MODE
-  clock_t start;
-  clock_t end;
-#endif
-#define FREE_ARRAY_SIZE 512
-#define N_ITERATIONS FREE_ARRAY_SIZE * 512
-  void *to_free[FREE_ARRAY_SIZE];
-  DBusMemPool *pool;
-
-  _dbus_verbose ("Timings for size %d\n", size);
-  
-  _dbus_verbose (" malloc\n");
-  
-#ifdef DBUS_ENABLE_VERBOSE_MODE
-  start = clock ();
-#endif
-
-  i = 0;
-  j = 0;
-  while (i < N_ITERATIONS)
-    {
-      to_free[j] = dbus_malloc (size);
-      _dbus_assert (to_free[j] != NULL); /* in a real app of course this is wrong */
-
-      ++j;
-
-      if (j == FREE_ARRAY_SIZE)
-        {
-          j = 0;
-          while (j < FREE_ARRAY_SIZE)
-            {
-              dbus_free (to_free[j]);
-              ++j;
-            }
-
-          j = 0;
-        }
-      
-      ++i;
-    }
-
-#ifdef DBUS_ENABLE_VERBOSE_MODE
-  end = clock ();
-
-  _dbus_verbose ("  created/destroyed %d elements in %g seconds\n",
-                 N_ITERATIONS, (end - start) / (double) CLOCKS_PER_SEC);
-
-
-
-  _dbus_verbose (" mempools\n");
-  
-  start = clock ();
-#endif
-
-  pool = _dbus_mem_pool_new (size, FALSE);
-  
-  i = 0;
-  j = 0;
-  while (i < N_ITERATIONS)
-    {
-      to_free[j] = _dbus_mem_pool_alloc (pool); 
-      _dbus_assert (to_free[j] != NULL);  /* in a real app of course this is wrong */
-
-      ++j;
-
-      if (j == FREE_ARRAY_SIZE)
-        {
-          j = 0;
-          while (j < FREE_ARRAY_SIZE)
-            {
-              _dbus_mem_pool_dealloc (pool, to_free[j]);
-              ++j;
-            }
-
-          j = 0;
-        }
-      
-      ++i;
-    }
-
-  _dbus_mem_pool_free (pool);
-  
-#ifdef DBUS_ENABLE_VERBOSE_MODE
-  end = clock ();
-
-  _dbus_verbose ("  created/destroyed %d elements in %g seconds\n",
-                 N_ITERATIONS, (end - start) / (double) CLOCKS_PER_SEC);
-
-  _dbus_verbose (" zeroed malloc\n");
-    
-  start = clock ();
-#endif
-  
-  i = 0;
-  j = 0;
-  while (i < N_ITERATIONS)
-    {
-      to_free[j] = dbus_malloc0 (size);
-      _dbus_assert (to_free[j] != NULL); /* in a real app of course this is wrong */
-
-      ++j;
-
-      if (j == FREE_ARRAY_SIZE)
-        {
-          j = 0;
-          while (j < FREE_ARRAY_SIZE)
-            {
-              dbus_free (to_free[j]);
-              ++j;
-            }
-
-          j = 0;
-        }
-      
-      ++i;
-    }
-
-#ifdef DBUS_ENABLE_VERBOSE_MODE
-  end = clock ();
-
-  _dbus_verbose ("  created/destroyed %d elements in %g seconds\n",
-                 N_ITERATIONS, (end - start) / (double) CLOCKS_PER_SEC);
-  
-  _dbus_verbose (" zeroed mempools\n");
-  
-  start = clock ();
-#endif
-
-  pool = _dbus_mem_pool_new (size, TRUE);
-  
-  i = 0;
-  j = 0;
-  while (i < N_ITERATIONS)
-    {
-      to_free[j] = _dbus_mem_pool_alloc (pool); 
-      _dbus_assert (to_free[j] != NULL);  /* in a real app of course this is wrong */
-
-      ++j;
-
-      if (j == FREE_ARRAY_SIZE)
-        {
-          j = 0;
-          while (j < FREE_ARRAY_SIZE)
-            {
-              _dbus_mem_pool_dealloc (pool, to_free[j]);
-              ++j;
-            }
-
-          j = 0;
-        }
-      
-      ++i;
-    }
-
-  _dbus_mem_pool_free (pool);
-  
-#ifdef DBUS_ENABLE_VERBOSE_MODE
-  end = clock ();
-
-  _dbus_verbose ("  created/destroyed %d elements in %g seconds\n",
-                 N_ITERATIONS, (end - start) / (double) CLOCKS_PER_SEC);
-#endif
-}
-
-/**
- * @ingroup DBusMemPoolInternals
- * Unit test for DBusMemPool
- * @returns #TRUE on success.
- */
-dbus_bool_t
-_dbus_mem_pool_test (void)
-{
-  int i;
-  int element_sizes[] = { 4, 8, 16, 50, 124 };
-  
-  i = 0;
-  while (i < _DBUS_N_ELEMENTS (element_sizes))
-    {
-      time_for_size (element_sizes[i]);
-      ++i;
-    }
-  
-  return TRUE;
-}
-
-#endif /* DBUS_ENABLE_EMBEDDED_TESTS */

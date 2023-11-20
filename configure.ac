@@ -2,15 +2,15 @@ dnl -*- mode: m4 -*-
 AC_PREREQ([2.63])
 
 m4_define([dbus_major_version], [1])
-m4_define([dbus_minor_version], [12])
-m4_define([dbus_micro_version], [20])
+m4_define([dbus_minor_version], [15])
+m4_define([dbus_micro_version], [4])
 m4_define([dbus_version],
           [dbus_major_version.dbus_minor_version.dbus_micro_version])
-AC_INIT([dbus],[dbus_version],[https://bugs.freedesktop.org/enter_bug.cgi?product=dbus],[dbus])
+AC_INIT([dbus], [dbus_version], [https://gitlab.freedesktop.org/dbus/dbus/issues], [dbus])
 
 AC_CONFIG_AUX_DIR([build-aux])
 
-m4_pattern_forbid([^AX_(CHECK_ENABLE_DEBUG|CODE_COVERAGE|COMPILER_FLAGS|COMPILER_FLAGS_(CFLAGS|CXXFLAGS|LDFLAGS))\b],
+m4_pattern_forbid([^AX_(CHECK_ENABLE_DEBUG|CODE_COVERAGE|COMPILER_FLAGS|COMPILER_FLAGS_(CFLAGS|CXXFLAGS|LDFLAGS)|RECURSIVE_EVAL)\b],
   [Unexpanded AX_ macro found. Please install GNU autoconf-archive])
 
 AC_CANONICAL_HOST
@@ -18,7 +18,7 @@ AC_CANONICAL_HOST
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_MACRO_DIR([m4])
 
-AM_INIT_AUTOMAKE([1.13 tar-ustar -Wno-portability subdir-objects])
+AM_INIT_AUTOMAKE([1.13 tar-ustar no-dist-gzip dist-xz -Wno-portability subdir-objects foreign])
 
 GETTEXT_PACKAGE=dbus-1
 AC_SUBST(GETTEXT_PACKAGE)
@@ -38,16 +38,16 @@ AC_DEFINE_UNQUOTED(DBUS_DAEMON_NAME,"dbus-daemon",[Name of executable])
 #
 
 ## increment if the interface has additions, changes, removals.
-LT_CURRENT=22
+LT_CURRENT=39
 
 ## increment any time the source changes; set to
 ##  0 if you increment CURRENT
-LT_REVISION=13
+LT_REVISION=0
 
 ## increment if any interfaces have been added; set to 0
 ## if any interfaces have been changed or removed. removal has
 ## precedence over adding, so set to 0 if both happened.
-LT_AGE=19
+LT_AGE=36
 
 AC_SUBST(LT_CURRENT)
 AC_SUBST(LT_REVISION)
@@ -101,7 +101,6 @@ AC_USE_SYSTEM_EXTENSIONS
 AC_SYS_LARGEFILE
 AC_ISC_POSIX
 AC_HEADER_STDC
-AC_C_INLINE
 AM_PROG_LIBTOOL
 AC_PROG_MKDIR_P
 PKG_PROG_PKG_CONFIG
@@ -151,11 +150,21 @@ if test "$dbus_win" = yes; then
     # Assume DBUS_VERSION is always three numbers
     BUILD_FILEVERSION=`echo "$DBUS_VERSION" | sed -e 's/\./,/g'`,0
     AC_SUBST(BUILD_FILEVERSION)
+    # In the CMake build system we generate multiple files, versioninfo-*.rc, with a
+    # different "internal name" and "original filename", for embedding in multiple
+    # executables. In the Autotools build system, we currently only generate
+    # versioninfo.rc and embed it in libdbus-1-${SOVERSION}.dll.
+    AC_SUBST([DBUS_VER_INTERNAL_NAME], [libdbus-1-${SOVERSION}])
+    AC_SUBST([DBUS_VER_ORIGINAL_NAME], [libdbus-1-${SOVERSION}.dll])
+    AC_SUBST([DBUS_VER_FILE_TYPE], [VFT_DLL])
     AS_IF([test -z "$RC"],
         [AC_MSG_ERROR([An implementation of windres is required])])
     if test "$dbus_wince" = yes; then
       AC_DEFINE(DBUS_WINCE,1,[Defined if we run on a W32 CE API based system])
       AC_DEFINE(_WIN32_WCE, 0x0502, [Defined to get newer W32 CE APIs])
+    else
+      AC_DEFINE([_WIN32_WINNT], [0x0600],
+        [Define to the minimum supported Windows version (0x0600 is Vista)])
     fi
 else
     AC_DEFINE(DBUS_UNIX,1,[Defined if we run on a Unix-based system])
@@ -207,12 +216,12 @@ AC_ARG_ENABLE(kqueue, AS_HELP_STRING([--enable-kqueue],[build with kqueue suppor
 AC_ARG_ENABLE(console-owner-file, AS_HELP_STRING([--enable-console-owner-file],[enable console owner file]),enable_console_owner_file=$enableval,enable_console_owner_file=auto)
 AC_ARG_ENABLE(launchd, AS_HELP_STRING([--enable-launchd],[build with launchd auto-launch support]),enable_launchd=$enableval,enable_launchd=auto)
 AC_ARG_ENABLE(systemd, AS_HELP_STRING([--enable-systemd],[build with systemd at_console support]),enable_systemd=$enableval,enable_systemd=auto)
+AC_ARG_ENABLE(traditional-activation, AS_HELP_STRING([--disable-traditional-activation], [Do not build support for service activation without using SystemdService]), enable_traditional_activation="$enableval", enable_traditional_activation=yes)
 
 AC_ARG_WITH(session-socket-dir, AS_HELP_STRING([--with-session-socket-dir=[dirname]],[Where to put sockets for the per-login-session message bus]))
 AC_ARG_WITH(test-socket-dir, AS_HELP_STRING([--with-test-socket-dir=[dirname]],[Where to put sockets for make check]))
 AC_ARG_WITH(system-pid-file, AS_HELP_STRING([--with-system-pid-file=[pidfile]],[PID file for systemwide daemon]))
 AC_ARG_WITH(system-socket, AS_HELP_STRING([--with-system-socket=[filename]],[UNIX domain socket for systemwide daemon]))
-AC_ARG_WITH(console-auth-dir, AS_HELP_STRING([--with-console-auth-dir=[dirname]],[directory to check for console ownerhip]))
 AC_ARG_WITH(console-owner-file, AS_HELP_STRING([--with-console-owner-file=[filename]],[file whose owner determines current console owner]))
 AC_ARG_WITH(launchd-agent-dir, AS_HELP_STRING([--with-launchd-agent-dir=[dirname]],[directory to put the launchd agent (default: /Library/LaunchAgents)]))
 AC_ARG_WITH(dbus_user, AS_HELP_STRING([--with-dbus-user=<user>],[User for running the DBUS daemon (messagebus)]))
@@ -237,7 +246,7 @@ AC_ARG_ENABLE([tests],
   [
   if test "x$enableval" = xyes; then
     AC_MSG_NOTICE([Full test coverage was requested with --enable-tests=yes])
-    AC_MSG_NOTICE([This has many dependencies (GLib, Python etc.)])
+    AC_MSG_NOTICE([This requires GLib])
   fi
   enable_embedded_tests=$enableval
   enable_modular_tests=$enableval
@@ -261,7 +270,7 @@ fi
 dnl Don't do anything too subtle here, because the CMake build system
 dnl parses these lines with regular expressions. If necessary, adjust
 dnl cmake/modules/MacrosAutotools.cmake to compensate.
-AC_DEFINE([GLIB_VERSION_MIN_REQUIRED], [GLIB_VERSION_2_40], [Ignore post-2.40 deprecations])
+AC_DEFINE([GLIB_VERSION_MIN_REQUIRED], [GLIB_VERSION_2_38], [Ignore post-2.38 deprecations])
 AC_DEFINE([GLIB_VERSION_MAX_ALLOWED], [G_ENCODE_VERSION(2,44)], [Prevent post-2.44 APIs])
 
 with_glib=yes
@@ -303,22 +312,6 @@ AC_ARG_ENABLE([installed-tests],
 AM_CONDITIONAL([DBUS_ENABLE_INSTALLED_TESTS],
   [test "x$enable_installed_tests" = xyes])
 
-if test "x$enable_tests" = xyes; then
-  # full test coverage is required, Python is a hard dependency
-  AC_MSG_NOTICE([Full test coverage (--enable-tests=yes) requires Python, dbus-python, pygi])
-  AM_PATH_PYTHON([2.6])
-  AC_MSG_CHECKING([for Python modules for full test coverage])
-  if "$PYTHON" -c "import dbus, gi.repository.GObject, dbus.mainloop.glib"; then
-    AC_MSG_RESULT([yes])
-  else
-    AC_MSG_RESULT([no])
-    AC_MSG_ERROR([cannot import dbus, gi.repository.GObject, dbus.mainloop.glib Python modules])
-  fi
-else
-  # --enable-tests not given: do not abort if Python is missing
-  AM_PATH_PYTHON([2.6], [], [:])
-fi
-
 if test x$enable_verbose_mode = xyes; then
     AC_DEFINE(DBUS_ENABLE_VERBOSE_MODE,1,[Support a verbose mode])
 fi
@@ -326,18 +319,11 @@ fi
 dnl Intentional:
 dnl - $DISABLE_WARNINGS disables unused-label warnings if not
 dnl   checking or not asserting (tested further below)
-dnl - we are not going to stop using deprecated functions on a stable
-dnl   branch
 dnl - missing field initializers being 0 is a C feature, not a bug
 dnl - unused-parameter is to make writing callbacks less annoying
-dnl - cast-function-type is for the
-dnl   foreach(list, (DBusForeachFunction) free, NULL) idiom which would
-dnl   be too intrusive to replace in a stable branch
 DISABLE_WARNINGS="$DISABLE_WARNINGS
-                  -Wno-deprecated-declarations
                   -Wno-missing-field-initializers
-                  -Wno-unused-parameter
-                  -Wno-cast-function-type"
+                  -Wno-unused-parameter"
 
 if test x$enable_asserts = xno; then
     AC_DEFINE(DBUS_DISABLE_ASSERT,1,[Disable assertion checking])
@@ -386,13 +372,74 @@ AS_IF([test x$enable_code_coverage = xyes],[
       [Defined if gcov is enabled to force a rebuild due to config.h changing])
   ])
 
+#### Simple checks for things with no special dependencies
+
+# This construct is only suitable for functions that are in the system's
+# standard C library and do not have unusual dependencies. Other
+# functions need their own checks. Please keep sorted in LC_ALL=C order
+AC_CHECK_FUNCS_ONCE([
+accept4
+clearenv
+close_range
+closefrom
+fpathconf
+getgrouplist
+getpeereid
+getpeerucred
+getrandom
+getresuid
+getrlimit
+inotify_init1
+issetugid
+localeconv
+nanosleep
+pipe2
+poll
+prctl
+prlimit
+raise
+setenv
+setlocale
+setresuid
+setrlimit
+socketpair
+unsetenv
+usleep
+])
+
+# This construct is only suitable for headers that are self-contained
+# and do not require extra headers to be included first. More complex
+# headers need their own checks. Please keep sorted in LC_ALL=C order
+AC_CHECK_HEADERS_ONCE([
+alloca.h
+byteswap.h
+crt_externs.h
+dirent.h
+errno.h
+linux/close_range.h
+locale.h
+signal.h
+sys/prctl.h
+sys/random.h
+sys/resource.h
+sys/syscall.h
+sys/time.h
+unistd.h
+winsock2.h
+ws2tcpip.h
+])
+
+#### Pointer size
+AC_CHECK_SIZEOF(void *)
+DBUS_SIZEOF_VOID_P=$ac_cv_sizeof_void_p
+AC_SUBST(DBUS_SIZEOF_VOID_P)
+
 #### Integer sizes
 
 AC_CHECK_SIZEOF(char)
 AC_CHECK_SIZEOF(short)
 AC_CHECK_SIZEOF(long)
 AC_CHECK_SIZEOF(int)
-AC_CHECK_SIZEOF(void *)
 AC_CHECK_SIZEOF(long long)
 AC_CHECK_SIZEOF(__int64)
 
@@ -404,23 +451,30 @@ $ac_cv_sizeof_int)
   dbusint64=int
   dbusint64_constant='(val)'
   dbusuint64_constant='(val)'
+  dbusint64_modifier=""
   ;;
 $ac_cv_sizeof_long)
   dbusint64=long
   dbusint64_constant='(val##L)'
   dbusuint64_constant='(val##UL)'
+  dbusint64_modifier="l"
   ;;
 $ac_cv_sizeof_long_long)
   dbusint64='long long'
   dbusint64_constant='(val##LL)'
   dbusuint64_constant='(val##ULL)'
+  dbusint64_modifier="ll"
   ;;
 $ac_cv_sizeof___int64)
   dbusint64=__int64
   dbusint64_constant='(val##i64)'
   dbusuint64_constant='(val##ui64)'
+  dbusint64_modifier="I64"
   ;;
 esac
+
+# MSVCRT.dll printf() doesn't support %lld
+AS_IF([test "$dbus_win" = yes], [dbusint64_modifier="I64"])
 
 AS_IF(
   [test -z "$dbusint64"],
@@ -436,12 +490,14 @@ Please report a bug here with details of your platform and compiler:
         DBUS_INT64_TYPE="$dbusint64"
         DBUS_INT64_CONSTANT="$dbusint64_constant"
         DBUS_UINT64_CONSTANT="$dbusuint64_constant"
+        DBUS_INT64_MODIFIER="$dbusint64_modifier"
         AC_MSG_RESULT($DBUS_INT64_TYPE)
   ])
 
 AC_SUBST(DBUS_INT64_TYPE)
 AC_SUBST(DBUS_INT64_CONSTANT)
 AC_SUBST(DBUS_UINT64_CONSTANT)
+AC_SUBST(DBUS_INT64_MODIFIER)
 
 ### see what 32-bit int is called
 AC_MSG_CHECKING([32-bit integer type])
@@ -511,98 +567,12 @@ esac
 # the AC_INCLUDES_DEFAULT.
 AC_CHECK_DECLS([environ])
 
-dnl **********************************
-dnl *** va_copy checks (from GLib) ***
-dnl **********************************
-dnl we currently check for all three va_copy possibilities, so we get
-dnl all results in config.log for bug reports.
-AC_CACHE_CHECK([for an implementation of va_copy()],dbus_cv_va_copy,[
-	AC_LINK_IFELSE([AC_LANG_SOURCE([#include <stdarg.h>
-#include <stdlib.h>
-	static void f (int i, ...) {
-	va_list args1, args2;
-	va_start (args1, i);
-	va_copy (args2, args1);
-	if (va_arg (args2, int) != 42 || va_arg (args1, int) != 42)
-	  exit (1);
-	va_end (args1); va_end (args2);
-	}
-	int main() {
-	  f (0, 42);
-	  return 0;
-	}])],
-	[dbus_cv_va_copy=yes],
-	[dbus_cv_va_copy=no])
-])
-AC_CACHE_CHECK([for an implementation of __va_copy()],dbus_cv___va_copy,[
-	AC_LINK_IFELSE([AC_LANG_SOURCE([#include <stdarg.h>
-#include <stdlib.h>
-	static void f (int i, ...) {
-	va_list args1, args2;
-	va_start (args1, i);
-	__va_copy (args2, args1);
-	if (va_arg (args2, int) != 42 || va_arg (args1, int) != 42)
-	  exit (1);
-	va_end (args1); va_end (args2);
-	}
-	int main() {
-	  f (0, 42);
-	  return 0;
-	}])],
-	[dbus_cv___va_copy=yes],
-	[dbus_cv___va_copy=no])
-])
-
-if test "x$dbus_cv_va_copy" = "xyes"; then
-  dbus_va_copy_func=va_copy
-else if test "x$dbus_cv___va_copy" = "xyes"; then
-  dbus_va_copy_func=__va_copy
-fi
-fi
-
-if test -n "$dbus_va_copy_func"; then
-  AC_DEFINE_UNQUOTED(DBUS_VA_COPY,$dbus_va_copy_func,[A 'va_copy' style function])
-fi
-
-AC_LANG_PUSH(C)
-AC_CACHE_CHECK([whether va_lists can be copied by value],
-	dbus_cv_va_val_copy,
-	[AC_RUN_IFELSE([AC_LANG_PROGRAM(
-[[
-	#include <stdarg.h>
-	#include <stdlib.h>
-]],
-[[
-	static void f (int i, ...) {
-	va_list args1, args2;
-	va_start (args1, i);
-	args2 = args1;
-	if (va_arg (args2, int) != 42 || va_arg (args1, int) != 42)
-	  exit (1);
-	va_end (args1); va_end (args2);
-	}
-	int main() {
-	  f (0, 42);
-	  return 0;
-	}
-]])],
-	[dbus_cv_va_val_copy=yes],
-	[dbus_cv_va_val_copy=no],
-	[dbus_cv_va_val_copy=yes])
-])
-AC_LANG_POP(C)
-
-if test "x$dbus_cv_va_val_copy" = "xno"; then
-  AC_DEFINE(DBUS_VA_COPY_AS_ARRAY,1, ['va_lists' cannot be copies as values])
-fi
-
-
 #### Atomic integers
 
 AC_CACHE_CHECK([whether $CC knows __sync_sub_and_fetch()],
   dbus_cv_sync_sub_and_fetch,
   [AC_LINK_IFELSE([
-     AC_LANG_PROGRAM([[]], [[int a = 4; int b = __sync_sub_and_fetch(&a, 4); exit(b); ]])],
+     AC_LANG_PROGRAM([[]], [[int a = 4; int b = __sync_sub_and_fetch(&a, 4); return b; ]])],
      [dbus_cv_sync_sub_and_fetch=yes],
      [dbus_cv_sync_sub_and_fetch=no])
   ])
@@ -619,77 +589,15 @@ AC_DEFINE_UNQUOTED([DBUS_USE_SYNC], [$have_sync], [Use the gcc __sync extension]
 AC_SEARCH_LIBS(socket,[socket network])
 AC_CHECK_FUNC(gethostbyname,,[AC_CHECK_LIB(nsl,gethostbyname)])
 
-AC_CHECK_FUNCS([vsnprintf vasprintf nanosleep usleep setenv clearenv unsetenv socketpair getgrouplist fpathconf setrlimit poll setlocale localeconv strtoll strtoull issetugid getresuid setresuid getrlimit prlimit])
-
 AC_CHECK_HEADERS([syslog.h])
 if test "x$ac_cv_header_syslog_h" = "xyes"; then
   AC_CHECK_DECLS([LOG_PERROR], [], [], [[#include <syslog.h>]])
 fi
 
-# For test-segfault.c
-AC_CHECK_HEADERS_ONCE([sys/prctl.h])
-AC_CHECK_FUNCS_ONCE([prctl raise])
-
-AC_MSG_CHECKING(for dirfd)
-AC_LINK_IFELSE([AC_LANG_PROGRAM([[
-#include <sys/types.h>
-#include <dirent.h>
-]], [[
-DIR *dirp;
-dirp = opendir(".");
-dirfd(dirp);
-closedir(dirp);
-]])],
-[dbus_have_dirfd=yes],
-[dbus_have_dirfd=no])
-AC_MSG_RESULT($dbus_have_dirfd)
-if test "$dbus_have_dirfd" = yes; then
-	AC_DEFINE(HAVE_DIRFD,1,[Have dirfd function])
-else
-	AC_MSG_CHECKING(for DIR *dirp->dd_fd)
-	AC_LINK_IFELSE([AC_LANG_PROGRAM([[
-#include <sys/types.h>
-#include <dirent.h>
-	]], [[
-DIR *dirp;
-int fd;
-dirp = opendir(".");
-fd = dirp->dd_fd;
-closedir(dirp);
-        ]])],
-        [dbus_have_ddfd=yes],
-        [dbus_have_ddfd=no])
-	AC_MSG_RESULT($dbus_have_ddfd)
-	if test "$dbus_have_ddfd" = yes; then
-		AC_DEFINE(HAVE_DDFD,1,[Have the ddfd member of DIR])
-	fi
-fi
-
-AC_CHECK_HEADERS(sys/resource.h)
-AC_CHECK_HEADERS([sys/time.h])
-
-AC_CHECK_HEADERS(dirent.h)
-
 AC_CHECK_HEADERS([execinfo.h],
 	[AC_SEARCH_LIBS([backtrace], [execinfo],
 		[AC_DEFINE([HAVE_BACKTRACE], [1],
 			[Define to 1 if you have backtrace().])])])
-
-AC_CHECK_HEADERS(errno.h)
-
-AC_CHECK_HEADERS(signal.h)
-
-AC_CHECK_HEADERS(locale.h)
-
-AC_CHECK_HEADERS(byteswap.h)
-
-AC_CHECK_HEADERS(unistd.h)
-
-AC_CHECK_HEADERS([stdint.h])
-
-AC_CHECK_HEADERS(ws2tcpip.h)
-
-AC_CHECK_HEADERS(alloca.h)
 
 # Add -D_POSIX_PTHREAD_SEMANTICS if on Solaris
 #
@@ -698,52 +606,7 @@ case $host_os in
        CFLAGS="$CFLAGS -D_POSIX_PTHREAD_SEMANTICS" ;;
 esac
 
-# checking for a posix version of getpwnam_r
-# if we are cross compiling and can not run the test
-# assume getpwnam_r is the posix version
-# it is up to the person cross compiling to change
-# this behavior if desired
-AC_LANG_PUSH(C)
-AC_CACHE_CHECK([for posix getpwnam_r],
-		ac_cv_func_posix_getpwnam_r,
-		[AC_RUN_IFELSE([AC_LANG_PROGRAM(
-[[
-#include <errno.h>
-#include <pwd.h>
-]],
-[[
-    char buffer[10000];
-    struct passwd pwd, *pwptr = &pwd;
-    int error;
-    errno = 0;
-    error = getpwnam_r ("", &pwd, buffer,
-                        sizeof (buffer), &pwptr);
-   return (error < 0 && errno == ENOSYS)
-	   || error == ENOSYS;
-]])],
-	[ac_cv_func_posix_getpwnam_r=yes],
-	[ac_cv_func_posix_getpwnam_r=no],
-        [ac_cv_func_posix_getpwnam_r=yes]
-)])
-AC_LANG_POP(C)
-
-if test "$ac_cv_func_posix_getpwnam_r" = yes; then
-        AC_DEFINE(HAVE_POSIX_GETPWNAM_R,1,
-                [Have POSIX function getpwnam_r])
-else
-        AC_CACHE_CHECK([for nonposix getpwnam_r],
-                ac_cv_func_nonposix_getpwnam_r,
-                [AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <pwd.h>]], [[char buffer[10000];
-                        struct passwd pwd;
-                        getpwnam_r ("", &pwd, buffer,
-                                        sizeof (buffer));]])],
-                        [ac_cv_func_nonposix_getpwnam_r=yes],
-                        [ac_cv_func_nonposix_getpwnam_r=no])])
-                if test "$ac_cv_func_nonposix_getpwnam_r" = yes; then
-                AC_DEFINE(HAVE_NONPOSIX_GETPWNAM_R,1,
-                        [Have non-POSIX function getpwnam_r])
-        fi
-fi
+AC_CHECK_FUNCS_ONCE([getpwnam_r])
 
 dnl check for socklen_t
 AC_MSG_CHECKING(whether socklen_t is defined)
@@ -767,41 +630,9 @@ dnl check for writev header and writev function so we're
 dnl good to go if HAVE_WRITEV gets defined.
 AC_CHECK_HEADERS(sys/uio.h, [AC_CHECK_FUNCS(writev)])
 
-dnl needed on darwin for NAME_MAX
-AC_CHECK_HEADERS(sys/syslimits.h)
-
 dnl Make it easy to check if we have MSG_NOSIGNAL without actually having to include sys/socket.h
 AC_CHECK_DECLS([MSG_NOSIGNAL], [], [], [[ #include <sys/types.h>
 #include <sys/socket.h> ]])
-
-dnl check for flavours of varargs macros (test from GLib)
-AC_MSG_CHECKING(for ISO C99 varargs macros in C)
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[]], [[
-int a(int p1, int p2, int p3);
-#define call_a(...) a(1,__VA_ARGS__)
-call_a(2,3);
-]])],
-[dbus_have_iso_c_varargs=yes],
-[dbus_have_iso_c_varargs=no])
-AC_MSG_RESULT($dbus_have_iso_c_varargs)
-
-AC_MSG_CHECKING(for GNUC varargs macros)
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[]], [[
-int a(int p1, int p2, int p3);
-#define call_a(params...) a(1,params)
-call_a(2,3);
-]])],
-[dbus_have_gnuc_varargs=yes],
-[dbus_have_gnuc_varargs=no])
-AC_MSG_RESULT($dbus_have_gnuc_varargs)
-
-dnl Output varargs tests
-if test x$dbus_have_iso_c_varargs = xyes; then
-    AC_DEFINE(HAVE_ISO_VARARGS,1,[Have ISO C99 varargs macros])
-fi
-if test x$dbus_have_gnuc_varargs = xyes; then
-    AC_DEFINE(HAVE_GNUC_VARARGS,1,[Have GNU-style varargs macros])
-fi
 
 dnl Check for various credentials.
 AC_MSG_CHECKING(for struct cmsgcred)
@@ -826,10 +657,6 @@ AC_CHECK_MEMBER([struct unpcbid.unp_pid],
                 [],
                 [[#include <sys/un.h>]])
 
-AC_CHECK_FUNCS(getpeerucred getpeereid)
-
-AC_CHECK_FUNCS(pipe2 accept4)
-
 PKG_CHECK_MODULES([EXPAT], [expat])
 
 save_cflags="$CFLAGS"
@@ -845,7 +672,7 @@ AC_ARG_VAR([THREAD_LIBS])
 save_libs="$LIBS"
 LIBS="$LIBS $THREAD_LIBS"
 
-is_missing_pthread_function="is required when compiling D-Bus on Unix platforms, but is not in your libc or libpthread. Please open a bug on https://bugs.freedesktop.org/enter_bug.cgi?product=dbus with details of your platform."
+is_missing_pthread_function="is required when compiling D-Bus on Unix platforms, but is not in your libc or libpthread. Please open a bug on https://gitlab.freedesktop.org/dbus/dbus/-/issues/new with details of your platform."
 
 # Don't do these automatic checks if the user set THREAD_LIBS on the
 # configure command-line. If they did, we assume they're right.
@@ -975,7 +802,6 @@ fi
 dnl check if inotify backend is enabled
 if test x$have_inotify = xyes; then
    AC_DEFINE(DBUS_BUS_ENABLE_INOTIFY,1,[Use inotify])
-   AC_CHECK_FUNCS(inotify_init1)
 fi
 
 AM_CONDITIONAL(DBUS_BUS_ENABLE_INOTIFY, test x$have_inotify = xyes)
@@ -1008,7 +834,7 @@ fi
 if test x$have_linux_epoll = xyes; then
   AC_DEFINE([DBUS_HAVE_LINUX_EPOLL], 1, [Define to use epoll(4) on Linux])
 fi
-AM_CONDITIONAL([HAVE_LINUX_EPOLL], [test x$have_linux_epoll = xyes])
+AM_CONDITIONAL([DBUS_HAVE_LINUX_EPOLL], [test x$have_linux_epoll = xyes])
 
 # kqueue checks
 if test x$enable_kqueue = xno ; then
@@ -1099,6 +925,13 @@ if test x$enable_systemd = xyes -a x$have_systemd != xyes ; then
     AC_MSG_ERROR([Explicitly requested systemd support, but systemd not found])
 fi
 
+AS_IF([test "x$enable_traditional_activation" = xyes],
+    AC_DEFINE(ENABLE_TRADITIONAL_ACTIVATION,[1], [Enable traditional activation without using systemd])
+    AS_IF([test "x$enable_systemd" = xno],
+       AC_MSG_WARN([Traditional activation and systemd activation are both disabled, so service activation (automatically starting services that receive messages) will not work])))
+
+AM_CONDITIONAL(ENABLE_TRADITIONAL_ACTIVATION, test x$enable_traditional_activation = xyes)
+
 # If not found in $PATH, we might still have systemd and systemctl at runtime
 # (perhaps dbus is being compiled in a minimal chroot with no systemd).
 # Assume the upstream-recommended location. Distributors with split /usr
@@ -1166,6 +999,13 @@ if test x$dbus_win = xyes ; then
   fi
 fi
 
+AC_CHECK_HEADERS([afunix.h], [], [],
+  [AC_INCLUDES_DEFAULT[
+   #ifdef HAVE_WINSOCK2_H
+   # include <winsock2.h>
+   #endif
+  ]])
+
 AC_SUBST([NETWORK_libs])
 
 AC_ARG_WITH([valgrind],
@@ -1191,28 +1031,40 @@ AC_SUBST([LIBDBUS_LIBS])
 DBUS_X_LIBS=
 DBUS_X_CFLAGS=
 
+AC_ARG_WITH([x],
+  [AS_HELP_STRING([--without-x], [build without X11 support])],
+  [], [with_x=auto])
+
 AC_ARG_ENABLE([x11-autolaunch],
   AS_HELP_STRING([--enable-x11-autolaunch], [build with X11 auto-launch support]),
   [], [enable_x11_autolaunch=auto])
 
-if test "x$dbus_win" = xyes; then
-    if test "x$enable_x11_autolaunch" = xyes; then
+AS_IF([test "x$dbus_win" = xyes], [
+    AS_IF([test "x$enable_x11_autolaunch" = xyes], [
         AC_MSG_ERROR([X11 auto-launch is not supported on Windows])
-    fi
+    ])
 
     enable_x11_autolaunch=no
     have_x11=no
-else
-    AC_PATH_XTRA
-
-    if test "x$no_x" = xyes; then
-        have_x11=no
-    else
-        have_x11=yes
-        DBUS_X_LIBS="$X_LIBS $X_PRE_LIBS -lX11 $X_EXTRA_LIBS"
-        DBUS_X_CFLAGS="$X_CFLAGS"
-    fi
-fi
+], [test "x$with_x" != xno], [
+    PKG_CHECK_MODULES([X], [x11],
+            [AC_DEFINE([HAVE_X11], [1], [Define to 1 if you have X11 library])
+	     have_x11=yes
+	     DBUS_X_LIBS="$X_LIBS"
+	     DBUS_X_CFLAGS="$X_CFLAGS"
+            ], [
+             AS_IF([test "x$with_x" = xyes],
+                [AC_MSG_ERROR([Couldn't find X11, tried with pkg-config.])],
+                [AC_MSG_WARN([Couldn't find X11, tried with pkg-config.])]
+             )
+             have_x11=no
+            ])
+], [
+    have_x11=no
+    AS_IF([test "x$enable_x11_autolaunch" = "xyes"], [
+      AC_MSG_ERROR([--enable-x11-autolaunch and --without-x are not compatible])
+    ])
+])
 
 if test "x$enable_x11_autolaunch,$have_x11" = xyes,no; then
     AC_MSG_ERROR([X11 auto-launch requires X headers/libraries])
@@ -1280,6 +1132,9 @@ CFLAGS="$EXTRA_CFLAGS $CFLAGS"
 CXXFLAGS="$EXTRA_CXXFLAGS $CXXFLAGS"
 LDFLAGS="$EXTRA_LDFLAGS $LDFLAGS"
 
+AC_ARG_VAR([SANITIZE_CFLAGS],
+           [Extra CFLAGS for modules that are instrumented for error-checking])
+
 case $host_os in
     solaris*)
         # Solaris' C library apparently needs these runes to be threadsafe...
@@ -1322,8 +1177,48 @@ if test x$enable_doxygen_docs = xyes; then
     fi
 fi
 
+if test x$dbus_win = xno; then
+    DBUS_GENERATE_MAN=YES
+else
+    DBUS_GENERATE_MAN=NO
+fi
+AC_SUBST([DBUS_GENERATE_MAN])
+
 AM_CONDITIONAL(DBUS_DOXYGEN_DOCS_ENABLED, test x$enable_doxygen_docs = xyes)
 AC_MSG_RESULT($enable_doxygen_docs)
+
+AC_ARG_WITH([qchdir],
+            AS_HELP_STRING([--with-qchdir=DIR], [Directory for installing Qt help file]),
+            [qchdir=$withval],
+            [qchdir="$docdir"])
+AC_SUBST([qchdir])
+
+AC_ARG_ENABLE([qt-help],
+              [AS_HELP_STRING([--enable-qt-help=auto|yes|no], [Build Qt help documentation])],
+              [],
+              [enable_qt_help=auto])
+AS_IF([test "x$enable_qt_help" != xno],
+      [AC_CHECK_PROGS([QHELPGENERATOR], [qhelpgenerator qhelpgenerator-qt5])],
+      [QHELPGENERATOR=])
+AS_IF([test "x$QHELPGENERATOR" = x && test "x$enable_qt_help" != xno && test "x$enable_qt_help" != xauto],
+      [AC_MSG_ERROR([Building of Qt help requested, but qhelpgenerator not found])])
+
+AC_MSG_CHECKING([whether to build Qt help documentation])
+AS_IF([test "x$enable_doxygen_docs" = xyes && test "x$QHELPGENERATOR" != x], [
+    enable_qthelp_docs=yes
+    DOXYGEN_GENERATE_QHP=YES
+    DOXYGEN_QHG_LOCATION="$QHELPGENERATOR"
+    DOXYGEN_QCH_FILE="$(pwd)/doc/api/qch/dbus-$VERSION.qch"
+  ], [
+    DOXYGEN_GENERATE_QHP=NO
+    enable_qthelp_docs=no
+  ])
+AC_SUBST([DOXYGEN_GENERATE_QHP])
+AC_SUBST([DOXYGEN_QHG_LOCATION])
+AC_SUBST([DOXYGEN_QCH_FILE])
+
+AM_CONDITIONAL([DBUS_QTHELP_DOCS_ENABLED], [test "x$enable_qthelp_docs" = xyes])
+AC_MSG_RESULT($enable_qthelp_docs)
 
 AC_CHECK_PROGS([XSLTPROC], [xsltproc])
 AM_CONDITIONAL([DBUS_HAVE_XSLTPROC], [test "x$XSLTPROC" != "x"])
@@ -1391,8 +1286,8 @@ AM_CONDITIONAL(DBUS_CAN_UPLOAD_DOCS,
     [test x$enable_doxygen_docs = xyes && test x$enable_xml_docs = xyes &&
      test x$enable_ducktype_docs = xyes])
 
-# Autoconf 2.70 will support this, and many distros patch this option in,
-# but Autoconf 2.70 hasn't actually been released yet.
+# Autoconf 2.70 supports this, and many distros patched this option in
+# before Autoconf 2.70 was released
 AS_IF([test -z "${runstatedir}"], [runstatedir='${localstatedir}/run'])
 AC_SUBST([runstatedir])
 
@@ -1401,14 +1296,22 @@ AC_SUBST([runstatedir])
 #### find the actual value for $prefix that we'll end up with
 ##   (I know this is broken and should be done in the Makefile, but
 ##    that's a major pain and almost nobody actually seems to care)
-AS_AC_EXPAND(EXPANDED_PREFIX, "$prefix")
-AS_AC_EXPAND(EXPANDED_LOCALSTATEDIR, "$localstatedir")
-AS_AC_EXPAND(EXPANDED_SYSCONFDIR, "$sysconfdir")
-AS_AC_EXPAND(EXPANDED_BINDIR, "$bindir")
-AS_AC_EXPAND(EXPANDED_LIBDIR, "$libdir")
-AS_AC_EXPAND(EXPANDED_LIBEXECDIR, "$libexecdir")
-AS_AC_EXPAND(EXPANDED_DATADIR, "$datadir")
-AS_AC_EXPAND(EXPANDED_RUNSTATEDIR, "$runstatedir")
+AX_RECURSIVE_EVAL(["$prefix"], [EXPANDED_PREFIX])
+AX_RECURSIVE_EVAL(["$localstatedir"], [EXPANDED_LOCALSTATEDIR])
+AX_RECURSIVE_EVAL(["$sysconfdir"], [EXPANDED_SYSCONFDIR])
+AX_RECURSIVE_EVAL(["$bindir"], [EXPANDED_BINDIR])
+AX_RECURSIVE_EVAL(["$libdir"], [EXPANDED_LIBDIR])
+AX_RECURSIVE_EVAL(["$libexecdir"], [EXPANDED_LIBEXECDIR])
+AX_RECURSIVE_EVAL(["$datadir"], [EXPANDED_DATADIR])
+AX_RECURSIVE_EVAL(["$runstatedir"], [EXPANDED_RUNSTATEDIR])
+AC_SUBST([EXPANDED_PREFIX])
+AC_SUBST([EXPANDED_LOCALSTATEDIR])
+AC_SUBST([EXPANDED_SYSCONFDIR])
+AC_SUBST([EXPANDED_BINDIR])
+AC_SUBST([EXPANDED_LIBDIR])
+AC_SUBST([EXPANDED_LIBEXECDIR])
+AC_SUBST([EXPANDED_DATADIR])
+AC_SUBST([EXPANDED_RUNSTATEDIR])
 
 ##### systemd unit files
 AC_ARG_WITH([systemdsystemunitdir],
@@ -1435,14 +1338,14 @@ AS_HELP_STRING([--with-systemduserunitdir=DIR], [Directory for systemd user serv
 AC_SUBST([systemduserunitdir], [$with_systemduserunitdir])
 
 ##### Set up location for system bus socket
-if ! test -z "$with_system_socket"; then
-   DBUS_SYSTEM_SOCKET=$with_system_socket
-else
-   # We don't use runstatedir for this (yet?), because /var/run has been the
-   # interoperable system bus socket for 10+ years.
-   # See https://bugs.freedesktop.org/show_bug.cgi?id=101628
-   DBUS_SYSTEM_SOCKET=${EXPANDED_LOCALSTATEDIR}/run/dbus/system_bus_socket
-fi
+
+AS_IF([test -n "$with_system_socket"],
+   [DBUS_SYSTEM_SOCKET=$with_system_socket],
+   [DBUS_SYSTEM_SOCKET=${EXPANDED_RUNSTATEDIR}/dbus/system_bus_socket])
+
+dnl The actual check script is shared between Autotools and CMake.
+AS_IF([test "$dbus_win" != yes],
+    [${CONFIG_SHELL-/bin/sh} "${srcdir}/tools/check-runstatedir.sh" "$DBUS_SYSTEM_SOCKET"])
 
 AC_SUBST(DBUS_SYSTEM_SOCKET)
 AC_DEFINE_UNQUOTED(DBUS_SYSTEM_SOCKET,"$DBUS_SYSTEM_SOCKET",[The name of the socket the system bus listens on by default])
@@ -1470,12 +1373,6 @@ else
 fi
 
 AC_SUBST(DBUS_SYSTEM_PID_FILE)
-
-#### Directory to check for console ownership
-AS_IF([test -n "$with_console_auth_dir" && test "x$with_console_auth_dir" != xno],
-    [AC_DEFINE_UNQUOTED([DBUS_CONSOLE_AUTH_DIR], ["$with_console_auth_dir"],
-        [Directory to check for pam_console/pam_foreground flag files, or undefined])],
-    [with_console_auth_dir=])
 
 #### File to check for console ownership
 if test x$have_console_owner_file = xyes; then
@@ -1547,20 +1444,26 @@ AC_ARG_ENABLE([relocation],
 can_relocate=yes
 
 AS_CASE(["${exec_prefix}"],
-  ['NONE'|'${prefix}'],
+  ['NONE'|'${prefix}'|"${prefix}"],
     [:],
   [*],
-    [can_relocate=no])
+    [
+      can_relocate=no
+      # If the user said --enable-relocation but we can't do it, error out
+      AS_IF([test "x$enable_relocation" = xyes],
+        [AC_MSG_ERROR([Relocatable pkg-config metadata requires --exec-prefix='\${prefix}', not ${exec_prefix}])])
+    ])
 
 AS_CASE(["${libdir}"],
-  ['${prefix}/lib'|'${prefix}/lib64'|'${exec_prefix}/lib'|'${exec_prefix}/lib64'],
+  ['${prefix}/lib'|'${prefix}/lib64'|'${exec_prefix}/lib'|'${exec_prefix}/lib64'|"${prefix}/lib"|"${exec_prefix}/lib"|"${prefix}/lib64"|"${exec_prefix}/lib64"],
     [:],
   [*],
-    [can_relocate=no])
-
-# If the user said --enable-relocation but we can't do it, error out
-AS_IF([test "x$can_relocate" = xno && test "x$enable_relocation" = xyes],
-  [AC_MSG_ERROR([Relocatable pkg-config metadata requires --exec-prefix='\${prefix}' and the default libdir])])
+    [
+      can_relocate=no
+      # If the user said --enable-relocation but we can't do it, error out
+      AS_IF([test "x$enable_relocation" = xyes],
+        [AC_MSG_ERROR([Relocatable pkg-config metadata requires default libdir, not ${libdir}])])
+    ])
 
 # By default, on Windows we are relocatable if possible
 AS_IF([test "x$enable_relocation" = xauto && test "x$dbus_win" = xyes],
@@ -1575,7 +1478,7 @@ AS_IF([test "x$enable_relocation" = xauto],
 
 
 AS_IF([test "x$enable_relocation" = xyes],
-  [AC_SUBST([pkgconfig_prefix], ['${pcfiledir}/../../'])],
+  [AC_SUBST([pkgconfig_prefix], ['${pcfiledir}/../..'])],
   [AC_SUBST([pkgconfig_prefix], ['${original_prefix}'])])
 
 #### Directory to source sysconfdir configuration from
@@ -1612,7 +1515,7 @@ AC_DEFINE_UNQUOTED([DBUS_EXEEXT], ["$EXEEXT"],
                    [Extension for executables, typically empty or .exe])
 
 ## Export the non-setuid external helper
-TEST_LAUNCH_HELPER_BINARY="$DBUS_PWD/bus/dbus-daemon-launch-helper-test$EXEEXT"
+TEST_LAUNCH_HELPER_BINARY="$DBUS_TEST_EXEC/dbus-daemon-launch-helper-for-tests$EXEEXT"
 AC_SUBST(TEST_LAUNCH_HELPER_BINARY)
 AC_DEFINE_UNQUOTED(DBUS_TEST_LAUNCH_HELPER_BINARY, "$TEST_LAUNCH_HELPER_BINARY",
                    [Full path to the launch helper test program in the builddir])
@@ -1715,7 +1618,6 @@ AC_DEFINE_UNQUOTED([DBUS_SESSION_BUS_CONNECT_ADDRESS],
   [Fallback address for session bus clients])
 
 # darwin needs this to initialize the environment
-AC_CHECK_HEADERS(crt_externs.h)
 AC_CHECK_FUNC(_NSGetEnviron, [AC_DEFINE(HAVE_NSGETENVIRON, 1, [Define if your system needs _NSGetEnviron to set up the environment])])
 AH_VERBATIM(_DARWIN_ENVIRON,
 [
@@ -1723,6 +1625,15 @@ AH_VERBATIM(_DARWIN_ENVIRON,
 # include <sys/time.h>
 # include <crt_externs.h>
 # define environ (*_NSGetEnviron())
+#endif
+])
+
+AH_VERBATIM([USE_MINGW_ANSI_STDIO],
+[
+/* On Windows, we expect to be using msvcrt.dll-compatible printf
+ * (%I64u instead of %llu) unless otherwise specified */
+#ifndef __USE_MINGW_ANSI_STDIO
+#   define __USE_MINGW_ANSI_STDIO 0
 #endif
 ])
 
@@ -1776,6 +1687,7 @@ doc/dbus-send.1.xml
 doc/dbus-test-tool.1.xml
 doc/dbus-update-activation-environment.1.xml
 doc/dbus-uuidgen.1.xml
+doc/index.html
 dbus-1.pc
 dbus-1-uninstalled.pc
 cmake/DBus1Config.cmake:cmake/DBus1Config.pkgconfig.in
@@ -1806,6 +1718,7 @@ echo "
 	64-bit int:		  ${DBUS_INT64_TYPE}
 	32-bit int:		  ${DBUS_INT32_TYPE}
 	16-bit int:		  ${DBUS_INT16_TYPE}
+	pointer size:		  ${DBUS_SIZEOF_VOID_P}
         Doxygen:                  ${DOXYGEN:-not found}
         xmlto:                    ${XMLTO:-not found}
         ducktype:                 ${DUCKTYPE:-not found}
@@ -1827,8 +1740,10 @@ echo "
         Building inotify support: ${have_inotify}
         Building kqueue support:  ${have_kqueue}
         Building systemd support: ${have_systemd}
+        Traditional activation:   ${enable_traditional_activation}
         Building X11 code:        ${have_x11}
         Building Doxygen docs:    ${enable_doxygen_docs}
+        Building Qt help file:    ${enable_qthelp_docs}
         Building Ducktype docs:   ${enable_ducktype_docs}
         Building XML docs:        ${enable_xml_docs}
         Building launchd support: ${have_launchd}
@@ -1837,7 +1752,6 @@ echo "
         System bus PID file:      ${DBUS_SYSTEM_PID_FILE}
         Session bus listens on:   ${DBUS_SESSION_BUS_LISTEN_ADDRESS}
         Session clients connect to: ${DBUS_SESSION_BUS_CONNECT_ADDRESS}
-        pam_console auth dir:     ${with_console_auth_dir:-(none)}
         Console owner file:       ${have_console_owner_file}
         Console owner file path:  ${DBUS_CONSOLE_OWNER_FILE}
 	System bus user:          ${DBUS_USER}

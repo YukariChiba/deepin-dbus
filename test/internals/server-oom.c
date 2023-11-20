@@ -38,12 +38,22 @@
 /* Return TRUE if the right thing happens, but the right thing might include
  * OOM. */
 static dbus_bool_t
-test_new_server (void *user_data)
+test_new_server (void        *user_data,
+                 dbus_bool_t  have_memory)
 {
   const char *listen_address = user_data;
   DBusError error = DBUS_ERROR_INIT;
   DBusServer *server = NULL;
   dbus_bool_t result = FALSE;
+
+#ifdef DBUS_WIN
+  if (strstr (listen_address, "bind=*") != NULL)
+    {
+      g_test_skip ("bind=* not tested on Windows to avoid a firewall-exception request (dbus#64)");
+      result = TRUE;
+      goto out;
+    }
+#endif
 
   server = dbus_server_listen (listen_address, &error);
 
@@ -53,7 +63,7 @@ test_new_server (void *user_data)
   result = TRUE;
 
 out:
-  if (result)
+  if (have_memory || result)
     {
       test_assert_no_error (&error);
     }
@@ -83,6 +93,10 @@ static void
 test_oom_wrapper (gconstpointer data)
 {
   const OOMTestCase *test = data;
+
+  if (g_str_has_prefix (test->data, "unix:") &&
+      !test_check_af_unix_works ())
+    return;
 
   if ((g_str_has_prefix (test->data, "tcp:") ||
        g_str_has_prefix (test->data, "nonce-tcp:")) &&
@@ -121,6 +135,12 @@ main (int argc,
       char **argv)
 {
   int ret;
+#ifdef DBUS_UNIX
+  char *tmp = _dbus_strdup ("/tmp");
+#else
+  char *tmp = dbus_address_escape_value (g_get_tmp_dir ());
+#endif
+  gchar *unix_tmpdir = g_strdup_printf ("unix:tmpdir=%s", tmp);
 
   test_init (&argc, &argv);
 
@@ -129,12 +149,13 @@ main (int argc,
   add_oom_test ("/server/new-nonce-tcp", test_new_server, "nonce-tcp:host=127.0.0.1,bind=127.0.0.1");
   add_oom_test ("/server/new-tcp-star", test_new_server, "tcp:host=127.0.0.1,bind=*");
   add_oom_test ("/server/new-tcp-v4", test_new_server, "tcp:host=127.0.0.1,bind=127.0.0.1,family=ipv4");
-#ifdef DBUS_UNIX
-  add_oom_test ("/server/unix", test_new_server, "unix:tmpdir=/tmp");
-#endif
+  add_oom_test ("/server/unix", test_new_server, unix_tmpdir);
 
   ret = g_test_run ();
 
   g_queue_free_full (test_cases_to_free, g_free);
+  dbus_shutdown ();
+  g_free (unix_tmpdir);
+  dbus_free (tmp);
   return ret;
 }

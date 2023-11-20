@@ -3,6 +3,8 @@
  *
  * Copyright (C) 2003 Red Hat, Inc.
  *
+ * SPDX-License-Identifier: AFL-2.1 OR GPL-2.0-or-later
+ *
  * Licensed under the Academic Free License version 2.1
  *
  * This program is free software; you can redistribute it and/or modify
@@ -47,6 +49,10 @@
 #endif
 
 static BusContext *context;
+
+#ifdef DBUS_WIN
+#include <dbus/dbus-sysdeps-win.h>
+#endif
 
 #ifdef DBUS_UNIX
 
@@ -163,6 +169,9 @@ usage (void)
       " [--syslog]"
       " [--syslog-only]"
       " [--nofork]"
+#ifdef DBUS_WIN
+      " [--ready-event-handle=value]"
+#endif
 #ifdef DBUS_UNIX
       " [--fork]"
       " [--systemd-activation]"
@@ -320,6 +329,7 @@ handle_reload_watch (DBusWatch    *watch,
         loop = bus_context_get_loop (context);
         if (loop != NULL)
           {
+            _dbus_daemon_report_stopping ();
             _dbus_loop_quit (loop);
           }
       }
@@ -379,11 +389,8 @@ close_reload_pipe (DBusWatch **watch)
     _dbus_watch_unref (*watch);
     *watch = NULL;
 
-    _dbus_close_socket (reload_pipe[RELOAD_READ_END], NULL);
-    _dbus_socket_invalidate (&reload_pipe[RELOAD_READ_END]);
-
-    _dbus_close_socket (reload_pipe[RELOAD_WRITE_END], NULL);
-    _dbus_socket_invalidate (&reload_pipe[RELOAD_WRITE_END]);
+    _dbus_close_socket (&reload_pipe[RELOAD_READ_END], NULL);
+    _dbus_close_socket (&reload_pipe[RELOAD_WRITE_END], NULL);
 }
 #endif /* DBUS_UNIX */
 
@@ -402,6 +409,8 @@ main (int argc, char **argv)
   dbus_bool_t print_address;
   dbus_bool_t print_pid;
   BusContextFlags flags;
+  void *ready_event_handle;
+
 #ifdef DBUS_UNIX
   const char *error_str;
 
@@ -422,7 +431,12 @@ main (int argc, char **argv)
                error_str, _dbus_strerror (errno));
       return 1;
     }
+
+  /* Set all fds >= 3 close-on-execute. We don't want activated services
+   * to inherit fds we might have inherited from our caller. */
+  _dbus_fd_set_all_close_on_exec ();
 #endif
+  ready_event_handle = NULL;
 
   if (!_dbus_string_init (&config_file))
     return 1;
@@ -614,6 +628,20 @@ main (int argc, char **argv)
         {
           print_pid = TRUE; /* and we'll get the next arg if appropriate */
         }
+#ifdef DBUS_WIN
+      else if (strstr (arg, "--ready-event-handle=") == arg)
+        {
+          const char *desc;
+          desc = strchr (arg, '=');
+          _dbus_assert (desc != NULL);
+          ++desc;
+          if (sscanf (desc, "%p", &ready_event_handle) != 1)
+            {
+              fprintf (stderr, "%s specified, but invalid handle provided\n", arg);
+              exit (1);
+            }
+        }
+#endif
       else
         {
           usage ();
@@ -688,7 +716,7 @@ main (int argc, char **argv)
 
   dbus_error_init (&error);
   context = bus_context_new (&config_file, flags,
-                             &print_addr_pipe, &print_pid_pipe,
+                             &print_addr_pipe, &print_pid_pipe, ready_event_handle,
                              _dbus_string_get_length(&address) > 0 ? &address : NULL,
                              &error);
   _dbus_string_free (&config_file);
@@ -717,6 +745,7 @@ main (int argc, char **argv)
 #endif /* DBUS_UNIX */
 
   _dbus_verbose ("We are on D-Bus...\n");
+  _dbus_daemon_report_ready ();
   _dbus_loop_run (bus_context_get_loop (context));
 
   bus_context_shutdown (context);

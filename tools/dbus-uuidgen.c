@@ -2,6 +2,7 @@
 /* dbus-uuidgen.c  Utility program to create UUIDs
  *
  * Copyright (C) 2006 Red Hat, Inc.
+ * SPDX-License-Identifier: GPL-2.0-or-later
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -132,7 +133,7 @@ main (int argc, char *argv[])
   if (get_uuid || ensure_uuid)
     {
       char *uuid;
-      if (dbus_internal_do_not_use_get_uuid (filename, &uuid, ensure_uuid, &error))
+      if (_dbus_get_uuid (filename, &uuid, ensure_uuid, &error))
         {
           if (get_uuid) /* print nothing on --ensure */
             printf ("%s\n", uuid);

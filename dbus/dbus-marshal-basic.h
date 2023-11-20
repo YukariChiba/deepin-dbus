@@ -4,6 +4,8 @@
  * Copyright (C) 2002  CodeFactory AB
  * Copyright (C) 2004, 2005  Red Hat, Inc.
  *
+ * SPDX-License-Identifier: AFL-2.1 OR GPL-2.0-or-later
+ *
  * Licensed under the Academic Free License version 2.1
  *
  * This program is free software; you can redistribute it and/or modify
@@ -191,7 +193,7 @@ void          _dbus_marshal_read_basic        (const DBusString *str,
 void          _dbus_marshal_read_fixed_multi  (const DBusString *str,
                                                int               pos,
                                                int               element_type,
-                                               void             *value,
+                                               const void      **value,
                                                int               n_elements,
                                                int               byte_order,
                                                int              *new_pos);

@@ -6,6 +6,8 @@
  * Copyright © 2014-2015 Canonical, Ltd.
  * Copyright © 2015 Collabora Ltd.
  *
+ * SPDX-License-Identifier: AFL-2.1 OR GPL-2.0-or-later
+ *
  * Licensed under the Academic Free License version 2.1
  *
  * This program is free software; you can redistribute it and/or modify
@@ -53,6 +55,9 @@ bus_audit_init (BusContext *context)
 {
 #ifdef HAVE_LIBAUDIT
   int i;
+
+  if (audit_fd >= 0)
+    return;
 
   capng_get_caps_process ();
 
@@ -105,7 +110,11 @@ void
 bus_audit_shutdown (void)
 {
 #ifdef HAVE_LIBAUDIT
-  audit_close (audit_fd);
+  if (audit_fd >= 0)
+    {
+      audit_close (audit_fd);
+      audit_fd = -1;
+    }
 #endif /* HAVE_LIBAUDIT */
 }
 

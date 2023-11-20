@@ -1,10 +1,12 @@
 /* -*- mode: C; c-file-style: "gnu"; indent-tabs-mode: nil; -*- */
 /* dbus-hash.h Generic hash table utility (internal to D-Bus implementation)
- * 
+ *
  * Copyright (C) 2002  Red Hat, Inc.
  *
+ * SPDX-License-Identifier: AFL-2.1 OR GPL-2.0-or-later
+ *
  * Licensed under the Academic Free License version 2.1
- * 
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -14,7 +16,7 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
@@ -24,9 +26,7 @@
 #ifndef DBUS_HASH_H
 #define DBUS_HASH_H
 
-#ifdef HAVE_STDINT_H
 #include <stdint.h>
-#endif
 
 #ifdef HAVE_INTTYPES_H
 #include <inttypes.h>
@@ -75,6 +75,7 @@ DBUS_PRIVATE_EXPORT
 DBusHashTable* _dbus_hash_table_new                (DBusHashType      type,
                                                     DBusFreeFunction  key_free_function,
                                                     DBusFreeFunction  value_free_function);
+DBUS_PRIVATE_EXPORT
 DBusHashTable* _dbus_hash_table_ref                (DBusHashTable    *table);
 DBUS_PRIVATE_EXPORT
 void           _dbus_hash_table_unref              (DBusHashTable    *table);
@@ -88,6 +89,7 @@ DBUS_PRIVATE_EXPORT
 void           _dbus_hash_iter_remove_entry        (DBusHashIter     *iter);
 DBUS_PRIVATE_EXPORT
 void*          _dbus_hash_iter_get_value           (DBusHashIter     *iter);
+DBUS_PRIVATE_EXPORT
 void           _dbus_hash_iter_set_value           (DBusHashIter     *iter,
                                                     void             *value);
 DBUS_PRIVATE_EXPORT
@@ -96,6 +98,7 @@ DBUS_PRIVATE_EXPORT
 const char*    _dbus_hash_iter_get_string_key      (DBusHashIter     *iter);
 DBUS_PRIVATE_EXPORT
 uintptr_t      _dbus_hash_iter_get_uintptr_key     (DBusHashIter     *iter);
+DBUS_PRIVATE_EXPORT
 dbus_bool_t    _dbus_hash_iter_lookup              (DBusHashTable    *table,
                                                     void             *key,
                                                     dbus_bool_t       create_if_not_found,

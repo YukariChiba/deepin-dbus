@@ -3,8 +3,10 @@
  *
  * Copyright (C) 2002, 2003  Red Hat Inc.
  *
+ * SPDX-License-Identifier: AFL-2.1 OR GPL-2.0-or-later
+ *
  * Licensed under the Academic Free License version 2.1
- * 
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -14,7 +16,7 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
@@ -301,10 +303,7 @@ _dbus_transport_new_for_autolaunch (const char *scope, DBusError *error)
     }
 
   result = check_address (_dbus_string_get_const_data (&address), error);
-  if (result == NULL)
-    _DBUS_ASSERT_ERROR_IS_SET (error);
-  else
-    _DBUS_ASSERT_ERROR_IS_CLEAR (error);
+  _DBUS_ASSERT_ERROR_XOR_BOOL (error, result != NULL);
 
  out:
   _dbus_string_free (&address);
@@ -351,6 +350,10 @@ static const struct {
                                     DBusError        *error);
 } open_funcs[] = {
   { _dbus_transport_open_socket },
+  { _dbus_transport_open_unix_socket },
+#ifndef _WIN32
+  { _dbus_transport_open_unixexec },
+#endif
   { _dbus_transport_open_platform_specific },
   { _dbus_transport_open_autolaunch }
 #ifdef DBUS_ENABLE_EMBEDDED_TESTS
@@ -1473,6 +1476,22 @@ _dbus_transport_get_linux_security_label (DBusTransport  *transport,
     {
       return FALSE;
     }
+}
+
+/**
+ * If the transport has already been authenticated, return its
+ * credentials. If not, return #NULL.
+ *
+ * The caller must ref the returned credentials object if it wants to
+ * keep it.
+ */
+DBusCredentials *
+_dbus_transport_get_credentials (DBusTransport  *transport)
+{
+  if (!transport->authenticated)
+    return FALSE;
+
+  return _dbus_auth_get_identity (transport->auth);
 }
 
 /**

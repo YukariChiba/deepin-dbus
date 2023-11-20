@@ -3,6 +3,8 @@
  *
  * Copyright (C) 2005  Red Hat, Inc.
  *
+ * SPDX-License-Identifier: AFL-2.1 OR GPL-2.0-or-later
+ *
  * Licensed under the Academic Free License version 2.1
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,6 +25,8 @@
 
 #ifndef DBUS_MARSHAL_VALIDATE_H
 #define DBUS_MARSHAL_VALIDATE_H
+
+#include <dbus/dbus-string.h>
 
 /**
  * @addtogroup DBusMarshal

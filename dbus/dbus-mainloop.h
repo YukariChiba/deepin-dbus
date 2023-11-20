@@ -3,8 +3,10 @@
  *
  * Copyright (C) 2003  Red Hat, Inc.
  *
+ * SPDX-License-Identifier: AFL-2.1 OR GPL-2.0-or-later
+ *
  * Licensed under the Academic Free License version 2.1
- * 
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -14,7 +16,7 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
@@ -60,7 +62,13 @@ dbus_bool_t _dbus_loop_dispatch       (DBusLoop            *loop);
 int  _dbus_get_oom_wait    (void);
 void _dbus_wait_for_memory (void);
 
+static inline void
+_dbus_clear_loop (DBusLoop **pointer_to_loop)
+{
+  _dbus_clear_pointer_impl (DBusLoop, pointer_to_loop,
+                            _dbus_loop_unref);
+}
+
 #endif /* !DOXYGEN_SHOULD_SKIP_THIS */
 
 #endif /* DBUS_MAINLOOP_H */
-

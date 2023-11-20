@@ -1,10 +1,12 @@
 /* -*- mode: C; c-file-style: "gnu"; indent-tabs-mode: nil; -*- */
 /* dbus-sysdeps-pthread.c Implements threads using Windows threads (internal to libdbus)
- * 
+ *
  * Copyright (C) 2006  Red Hat, Inc.
  *
+ * SPDX-License-Identifier: AFL-2.1 OR GPL-2.0-or-later
+ *
  * Licensed under the Academic Free License version 2.1
- * 
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -14,7 +16,7 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
@@ -32,6 +34,19 @@
 
 #include <windows.h>
 
+#ifdef DBUS_DISABLE_ASSERT
+#define THREAD_CHECK_TRUE(func_name, result_or_call)    \
+    do { if (!(result_or_call)) { /* ignore */ } } while (0)
+#else
+#define THREAD_CHECK_TRUE(func_name, result_or_call) do { \
+    if (!(result_or_call)) { \
+      _dbus_warn_check_failed ("thread function %s failed (windows error code=%ld) in %s", \
+                               func_name, GetLastError (), _DBUS_FUNCTION_NAME); \
+    } \
+} while (0)
+#endif /* !DBUS_DISABLE_ASSERT */
+
+/* Protected by DllMain lock, effectively */
 static dbus_bool_t global_init_done = FALSE;
 static CRITICAL_SECTION init_lock;
 
@@ -54,7 +69,7 @@ struct DBusCondVar {
 
 static DWORD dbus_cond_event_tls = TLS_OUT_OF_INDEXES;
 
-
+/* Protected by DllMain lock, effectively */
 static HMODULE dbus_dll_hmodule;
 
 void *
@@ -112,6 +127,7 @@ _dbus_platform_cmutex_new (void)
 {
   HANDLE handle;
   handle = CreateMutex (NULL, FALSE, NULL);
+  THREAD_CHECK_TRUE ("CreateMutex", handle);
   return (DBusCMutex *) handle;
 }
 
@@ -120,43 +136,53 @@ _dbus_platform_rmutex_new (void)
 {
   HANDLE handle;
   handle = CreateMutex (NULL, FALSE, NULL);
+  THREAD_CHECK_TRUE ("CreateMutex", handle);
+  return (DBusRMutex *) handle;
+}
+
+DBusRMutex *
+_dbus_win_rmutex_named_new (const char *name)
+{
+  HANDLE handle;
+  handle = CreateMutex (NULL, FALSE, name);
+  THREAD_CHECK_TRUE ("CreateMutex", handle);
   return (DBusRMutex *) handle;
 }
 
 void
 _dbus_platform_cmutex_free (DBusCMutex *mutex)
 {
-  CloseHandle ((HANDLE *) mutex);
+  THREAD_CHECK_TRUE ("CloseHandle", CloseHandle ((HANDLE *) mutex));
 }
 
 void
 _dbus_platform_rmutex_free (DBusRMutex *mutex)
 {
-  CloseHandle ((HANDLE *) mutex);
+  THREAD_CHECK_TRUE ("CloseHandle", CloseHandle ((HANDLE *) mutex));
 }
 
 void
 _dbus_platform_cmutex_lock (DBusCMutex *mutex)
 {
-  WaitForSingleObject ((HANDLE *) mutex, INFINITE);
+  THREAD_CHECK_TRUE ("WaitForSingleObject", WaitForSingleObject ((HANDLE *) mutex, INFINITE) == WAIT_OBJECT_0);
 }
 
 void
 _dbus_platform_rmutex_lock (DBusRMutex *mutex)
 {
-  WaitForSingleObject ((HANDLE *) mutex, INFINITE);
+  THREAD_CHECK_TRUE ("WaitForSingleObject", WaitForSingleObject ((HANDLE *) mutex, INFINITE) == WAIT_OBJECT_0);
 }
 
 void
 _dbus_platform_cmutex_unlock (DBusCMutex *mutex)
 {
-  ReleaseMutex ((HANDLE *) mutex);
+  THREAD_CHECK_TRUE ("ReleaseMutex", ReleaseMutex ((HANDLE *) mutex));
 }
 
 void
 _dbus_platform_rmutex_unlock (DBusRMutex *mutex)
 {
-  ReleaseMutex ((HANDLE *) mutex);
+  THREAD_CHECK_TRUE ("ReleaseMutex", ReleaseMutex ((HANDLE *) mutex));
 }
 
 DBusCondVar *
